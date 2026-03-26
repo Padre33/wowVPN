@@ -90,6 +90,12 @@ class MainActivity : AppCompatActivity() {
                 binding.textDownload.text = formatBytes(downloadBytes)
             }
         }
+
+        // Restore connection state if service is already running
+        if (AivpnService.isRunning) {
+            isConnected = true
+            updateUI(true, AivpnService.lastStatusText)
+        }
     }
 
     /**

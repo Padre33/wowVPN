@@ -553,9 +553,14 @@ impl Gateway {
             (session, counter, is_ratcheted)
         } else if let Some((session, counter, is_ratcheted)) = self.session_manager.refresh_and_find_by_tag(&tag) {
             // Tag not in map — time window may have advanced. Refresh all sessions and retry.
+            debug!("Tag matched after refresh (counter={}, ratcheted={})", counter, is_ratcheted);
+            (session, counter, is_ratcheted)
+        } else if let Some((session, counter, is_ratcheted)) = self.session_manager.recover_session_by_tag(&tag, &client_addr.ip()) {
+            // Counter drift recovery — client counter was out of range but session keys match
             (session, counter, is_ratcheted)
         } else {
-            // No session found — try to establish a new one from eph_pub in MDH
+            // No session found — try handshake
+            // Try to establish a new one from eph_pub in MDH
             if packet_data.len() < TAG_SIZE + mdh_len + 32 {
                 return Err(Error::InvalidPacket("Too short for session init"));
             }
@@ -596,7 +601,10 @@ impl Gateway {
                                 self.session_manager.rollback_failed_session(&sid);
                             }
                         }
-                        Err(_) => continue,
+                        Err(e) => {
+                            debug!("create_session failed: {}", e);
+                            continue;
+                        }
                     }
                 }
                 match found {
@@ -706,15 +714,14 @@ impl Gateway {
             decrypt_payload(key, &nonce, encrypted_payload)?
         };
         
-        // Complete PFS ratchet after decrypting the init packet
-        if is_new_session {
+        // Complete PFS ratchet only when the CLIENT proves it has ratcheted
+        // by sending a packet with ratcheted-key tags.
+        // Do NOT ratchet on is_new_session — the client hasn't received
+        // ServerHello yet and will keep sending packets with initial keys.
+        if is_ratcheted_tag {
             let session_id = session.lock().session_id;
             self.session_manager.complete_session_ratchet(&session_id);
             self.session_manager.refresh_session_tags(&session_id);
-            info!("PFS ratchet complete for {} (post-ServerHello)", hash_addr(&client_addr));
-        } else if is_ratcheted_tag {
-            let session_id = session.lock().session_id;
-            self.session_manager.complete_session_ratchet(&session_id);
             info!("PFS ratchet complete for {}", hash_addr(&client_addr));
         }
         
@@ -731,10 +738,8 @@ impl Gateway {
         // Update session state
         let session_id = {
             let mut sess = session.lock();
-            if !is_ratcheted_tag {
-                sess.counter = counter;
-                sess.mark_tag_received(counter);
-            }
+            sess.counter = counter;
+            sess.mark_tag_received(counter);
             sess.last_seen = std::time::Instant::now();
             sess.update_tag_window();
             sess.update_fsm();

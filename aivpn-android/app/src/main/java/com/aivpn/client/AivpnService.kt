@@ -34,6 +34,10 @@ class AivpnService : VpnService() {
         // Callback to update the UI from the service
         var statusCallback: ((connected: Boolean, status: String) -> Unit)? = null
         var trafficCallback: ((uploadBytes: Long, downloadBytes: Long) -> Unit)? = null
+
+        // Whether VPN is currently connected (for UI state restoration)
+        @Volatile var isRunning = false
+        @Volatile var lastStatusText: String = ""
     }
 
     private var vpnInterface: ParcelFileDescriptor? = null
@@ -147,7 +151,9 @@ class AivpnService : VpnService() {
                 vpnInterface = builder.establish()
                     ?: throw Exception("Failed to establish VPN interface")
 
-                statusCallback?.invoke(true, getString(R.string.status_connected, host))
+                isRunning = true
+                lastStatusText = getString(R.string.status_connected, host)
+                statusCallback?.invoke(true, lastStatusText)
                 updateNotification(getString(R.string.notification_connected, host))
 
                 val tunFd = vpnInterface!!
@@ -173,8 +179,11 @@ class AivpnService : VpnService() {
             } catch (e: CancellationException) {
                 // Normal shutdown
             } catch (e: Exception) {
-                statusCallback?.invoke(false, getString(R.string.status_error, e.message ?: "unknown"))
+                isRunning = false
+                lastStatusText = getString(R.string.status_error, e.message ?: "unknown")
+                statusCallback?.invoke(false, lastStatusText)
             } finally {
+                isRunning = false
                 cleanup()
                 if (serviceJob == coroutineContext[Job]) {
                     serviceJob = null
@@ -267,7 +276,9 @@ class AivpnService : VpnService() {
         serviceJob?.cancel()
         serviceJob = null
         cleanup()
-        statusCallback?.invoke(false, getString(R.string.status_disconnected))
+        isRunning = false
+        lastStatusText = getString(R.string.status_disconnected)
+        statusCallback?.invoke(false, lastStatusText)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -282,6 +293,7 @@ class AivpnService : VpnService() {
     override fun onDestroy() {
         serviceJob?.cancel()
         cleanup()
+        isRunning = false
         super.onDestroy()
     }
 

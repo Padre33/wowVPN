@@ -65,6 +65,7 @@ class AivpnCrypto(private val serverStaticPub: ByteArray, private val psk: ByteA
     /**
      * Build the initial handshake packet with obfuscated eph_pub.
      */
+    @Synchronized
     fun buildInitPacket(): ByteArray {
         // Obfuscate eph_pub by XORing with BLAKE3-derived mask (matches Rust obfuscate_eph_pub)
         val mask = Blake3.deriveKey("aivpn-eph-obfuscation-v1", serverStaticPub)
@@ -85,6 +86,7 @@ class AivpnCrypto(private val serverStaticPub: ByteArray, private val psk: ByteA
     /**
      * Build a post-handshake keepalive control packet.
      */
+    @Synchronized
     fun buildKeepalivePacket(): ByteArray {
         val innerHeader = buildInnerHeader(0x02, sendSeq++) // 0x02 = Control
         val controlPayload = byteArrayOf(0x03) // Keepalive subtype
@@ -96,6 +98,7 @@ class AivpnCrypto(private val serverStaticPub: ByteArray, private val psk: ByteA
      * Process ServerHello — complete the PFS ratchet.
      * Returns true if the ratchet succeeded.
      */
+    @Synchronized
     fun processServerHello(packet: ByteArray): Boolean {
         return try {
             // Validate tag (try range of counters)
@@ -160,6 +163,7 @@ class AivpnCrypto(private val serverStaticPub: ByteArray, private val psk: ByteA
     /**
      * Encrypt an outbound IP packet into the AIVPN wire format.
      */
+    @Synchronized
     fun encryptDataPacket(ipPacket: ByteArray): ByteArray {
         val innerHeader = buildInnerHeader(0x01, sendSeq++) // 0x01 = Data
         val innerPayload = innerHeader + ipPacket
@@ -169,6 +173,7 @@ class AivpnCrypto(private val serverStaticPub: ByteArray, private val psk: ByteA
     /**
      * Decrypt an inbound AIVPN packet and return the inner IP packet, or null.
      */
+    @Synchronized
     fun decryptDataPacket(packet: ByteArray): ByteArray? {
         if (packet.size < TAG_SIZE + MDH_SIZE + 16) return null
 

@@ -591,6 +591,65 @@ impl SessionManager {
         }
         None
     }
+
+    /// Wide-range counter recovery: brute-force search over a large counter
+    /// range to recover from counter drift (e.g., client race condition).
+    /// Only called when normal tag lookup + refresh both fail but a session
+    /// exists for this client IP.
+    pub fn recover_session_by_tag(
+        &self,
+        tag: &[u8; TAG_SIZE],
+        client_ip: &std::net::IpAddr,
+    ) -> Option<(Arc<Mutex<Session>>, u64, bool)> {
+        let current_tw = crypto::compute_time_window(
+            crypto::current_timestamp_ms(),
+            DEFAULT_WINDOW_MS,
+        );
+        // Search up to 65536 counters ahead from the session's last known counter
+        const RECOVERY_RANGE: u64 = 65536;
+
+        for entry in self.sessions.iter() {
+            let session = entry.value().clone();
+            let session_id = *entry.key();
+            let sess = session.lock();
+            if sess.client_addr.ip() != *client_ip {
+                continue;
+            }
+
+            let base = sess.counter;
+            let tag_secret = &sess.keys.tag_secret;
+
+            for tw_offset in [0i64, -1, 1] {
+                let tw = (current_tw as i64 + tw_offset) as u64;
+                for i in 0..RECOVERY_RANGE {
+                    let c = base + i;
+                    let expected = crypto::generate_resonance_tag(tag_secret, c, tw);
+                    if bool::from(expected.ct_eq(tag)) {
+                        info!(
+                            "Counter recovery: found counter {} (drift={}) for session",
+                            c, i
+                        );
+                        // Update tag window to the recovered counter
+                        drop(sess);
+                        {
+                            let mut s = session.lock();
+                            s.counter = c;
+                            s.update_tag_window();
+                        }
+                        // Refresh tag_map
+                        self.tag_map.retain(|_, id| id != &session_id);
+                        let s = session.lock();
+                        for t in s.expected_tags.values() {
+                            self.tag_map.insert(*t, session_id);
+                        }
+                        drop(s);
+                        return Some((session, c, false));
+                    }
+                }
+            }
+        }
+        None
+    }
     
     /// Get session by ID
     pub fn get_session(&self, session_id: &[u8; 16]) -> Option<Arc<Mutex<Session>>> {
@@ -675,6 +734,38 @@ impl SessionManager {
     /// Get active session count
     pub fn session_count(&self) -> usize {
         self.sessions.len()
+    }
+
+    /// Log diagnostic information about all sessions and tag state
+    pub fn log_session_diagnostics(&self, incoming_tag: &[u8; TAG_SIZE]) {
+        let tag_map_size = self.tag_map.len();
+        let current_tw = crypto::compute_time_window(
+            crypto::current_timestamp_ms(),
+            DEFAULT_WINDOW_MS,
+        );
+        info!("DIAG: tag_map_size={}, current_tw={}", tag_map_size, current_tw);
+        for entry in self.sessions.iter() {
+            let sess = entry.value().lock();
+            let sid_hex = format!("{:02x}{:02x}{:02x}{:02x}", entry.key()[0], entry.key()[1], entry.key()[2], entry.key()[3]);
+            let is_ratcheted = sess.is_ratcheted;
+            let counter = sess.counter;
+            let expected_count = sess.expected_tags.len();
+            let ratcheted_count = sess.ratcheted_expected_tags.len();
+            let has_ratcheted_keys = sess.ratcheted_keys.is_some();
+            // Check if any expected tag matches (manually)
+            let mut found = false;
+            for (c, t) in &sess.expected_tags {
+                if t == incoming_tag {
+                    found = true;
+                    info!("DIAG: Session {} — expected tag MATCHES at counter {}", sid_hex, c);
+                    break;
+                }
+            }
+            info!(
+                "DIAG: Session {} — ratcheted={}, counter={}, expected_tags={}, ratcheted_tags={}, has_ratchet_keys={}, tag_matched={}",
+                sid_hex, is_ratcheted, counter, expected_count, ratcheted_count, has_ratcheted_keys, found
+            );
+        }
     }
     
     /// Get server public key
