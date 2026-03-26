@@ -13,6 +13,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.os.LocaleListCompat
 import com.aivpn.client.databinding.ActivityMainBinding
+import org.json.JSONObject
 
 /**
  * Main screen — server address, public key, connect/disconnect button,
@@ -55,12 +56,9 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // Restore saved credentials
+        // Restore saved connection key
         val prefs = getSharedPreferences("aivpn", MODE_PRIVATE)
-        binding.editServer.setText(prefs.getString("server", ""))
-        binding.editServerKey.setText(prefs.getString("server_key", ""))
-        binding.editPsk.setText(prefs.getString("psk", ""))
-        binding.editVpnIp.setText(prefs.getString("vpn_ip", ""))
+        binding.editConnectionKey.setText(prefs.getString("connection_key", ""))
 
         // Update language button label
         updateLanguageButton()
@@ -94,23 +92,44 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun connect() {
-        val server = binding.editServer.text.toString().trim()
-        val serverKey = binding.editServerKey.text.toString().trim()
-        val psk = binding.editPsk.text.toString().trim()
-        val vpnIp = binding.editVpnIp.text.toString().trim()
+    /**
+     * Parse connection key: aivpn://BASE64URL({"s":"host:port","k":"...","p":"...","i":"..."})
+     * Returns (server, serverKey, psk, vpnIp) or null on failure.
+     */
+    private fun parseConnectionKey(key: String): Array<String>? {
+        val raw = key.trim()
+        val payload = if (raw.startsWith("aivpn://")) raw.removePrefix("aivpn://") else raw
+        return try {
+            // Decode URL-safe base64 (no padding)
+            val jsonBytes = android.util.Base64.decode(payload,
+                android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP)
+            val json = JSONObject(String(jsonBytes))
+            val server = json.getString("s")
+            val serverKey = json.getString("k")
+            val psk = json.getString("p")
+            val vpnIp = json.getString("i")
+            arrayOf(server, serverKey, psk, vpnIp)
+        } catch (_: Exception) {
+            null
+        }
+    }
 
-        if (server.isEmpty() || serverKey.isEmpty()) {
+    private fun connect() {
+        val connectionKey = binding.editConnectionKey.text.toString().trim()
+        if (connectionKey.isEmpty()) {
             Toast.makeText(this, getString(R.string.error_fill_fields), Toast.LENGTH_SHORT).show()
             return
         }
 
-        // Save credentials
+        val parsed = parseConnectionKey(connectionKey)
+        if (parsed == null) {
+            Toast.makeText(this, getString(R.string.error_invalid_connection_key), Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        // Save connection key
         getSharedPreferences("aivpn", MODE_PRIVATE).edit()
-            .putString("server", server)
-            .putString("server_key", serverKey)
-            .putString("psk", psk)
-            .putString("vpn_ip", vpnIp)
+            .putString("connection_key", connectionKey)
             .apply()
 
         // Request VPN permission from the system
@@ -130,17 +149,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startVpnService() {
-        val server = binding.editServer.text.toString().trim()
-        val serverKey = binding.editServerKey.text.toString().trim()
-        val psk = binding.editPsk.text.toString().trim()
-        val vpnIp = binding.editVpnIp.text.toString().trim()
+        val connectionKey = binding.editConnectionKey.text.toString().trim()
+        val parsed = parseConnectionKey(connectionKey) ?: return
+        val (server, serverKey, psk, vpnIp) = parsed
 
         val intent = Intent(this, AivpnService::class.java).apply {
             action = AivpnService.ACTION_CONNECT
             putExtra("server", server)
             putExtra("server_key", serverKey)
-            if (psk.isNotEmpty()) putExtra("psk", psk)
-            if (vpnIp.isNotEmpty()) putExtra("vpn_ip", vpnIp)
+            putExtra("psk", psk)
+            putExtra("vpn_ip", vpnIp)
         }
         startForegroundService(intent)
         updateUI(true, getString(R.string.status_connecting))
@@ -165,10 +183,7 @@ class MainActivity : AppCompatActivity() {
         binding.statsRow.visibility = statsVisibility
 
         // Lock/unlock input fields while connected
-        binding.editServer.isEnabled = !connected
-        binding.editServerKey.isEnabled = !connected
-        binding.editPsk.isEnabled = !connected
-        binding.editVpnIp.isEnabled = !connected
+        binding.editConnectionKey.isEnabled = !connected
 
         // Timer management
         if (connected && connectionStartTime == 0L) {

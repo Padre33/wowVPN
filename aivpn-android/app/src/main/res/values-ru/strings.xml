@@ -13,7 +13,10 @@
     <string name="hint_server_key">Публичный ключ сервера (Base64)</string>
     <string name="hint_psk">PSK клиента (Base64)</string>
     <string name="hint_vpn_ip">VPN IP (напр. 10.0.0.2)</string>
+    <string name="hint_connection_key">Ключ подключения</string>
+    <string name="hint_connection_key_example">aivpn://…</string>
     <string name="error_fill_fields">Укажите адрес сервера и ключ</string>
+    <string name="error_invalid_connection_key">Неверный ключ подключения</string>
     <string name="error_vpn_denied">Доступ к VPN отклонён</string>
     <string name="error_invalid_key">Неверный ключ (нужно 32 байта)</string>
     <string name="error_handshake">Ошибка рукопожатия</string>

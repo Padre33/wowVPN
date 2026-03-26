@@ -49,6 +49,10 @@ pub struct ServerArgs {
     /// Show client config by ID (for QR / import)
     #[arg(long, value_name = "ID")]
     pub show_client: Option<String>,
+
+    /// Public IP of this server (embedded into connection keys)
+    #[arg(long, default_value = "217.26.25.6")]
+    pub server_ip: String,
 }
 
 /// AIVPN Server instance

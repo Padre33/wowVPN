@@ -124,6 +124,22 @@ fn load_server_public_key(args: &ServerArgs) -> Option<[u8; 32]> {
     })
 }
 
+/// Build a connection key: aivpn://BASE64({"s":"host:port","k":"...","p":"...","i":"..."})
+fn build_connection_key(args: &ServerArgs, server_pub_b64: &str, psk_b64: &str, vpn_ip: &str) -> String {
+    use base64::Engine;
+    let port = args.listen.split(':').last().unwrap_or("443");
+    let server_addr = format!("{}:{}", args.server_ip, port);
+    let json = serde_json::json!({
+        "s": server_addr,
+        "k": server_pub_b64,
+        "p": psk_b64,
+        "i": vpn_ip
+    });
+    let json_bytes = serde_json::to_string(&json).unwrap();
+    let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(json_bytes.as_bytes());
+    format!("aivpn://{}", encoded)
+}
+
 fn handle_add_client(db: &ClientDatabase, name: &str, args: &ServerArgs) {
     match db.add_client(name) {
         Ok(client) => {
@@ -131,42 +147,20 @@ fn handle_add_client(db: &ClientDatabase, name: &str, args: &ServerArgs) {
             let psk_b64 = base64::engine::general_purpose::STANDARD.encode(&client.psk);
             let server_pub = load_server_public_key(args);
 
-            println!("✅ Client '{}' created successfully!", name);
-            println!();
-            println!("  ID:     {}", client.id);
-            println!("  VPN IP: {}", client.vpn_ip);
-            println!("  PSK:    {}", psk_b64);
+            println!("✅ Client '{}' created!", name);
+            println!("   ID:     {}", client.id);
+            println!("   VPN IP: {}", client.vpn_ip);
             println!();
 
-            // Print Android-ready config
             if let Some(pub_key) = server_pub {
                 let pub_b64 = base64::engine::general_purpose::STANDARD.encode(&pub_key);
-                println!("── Android Client Config ──");
-                println!("  Server:     {}",
-                    if args.listen.starts_with("0.0.0.0") {
-                        format!("<YOUR_SERVER_IP>:{}", args.listen.split(':').last().unwrap_or("443"))
-                    } else {
-                        args.listen.clone()
-                    }
-                );
-                println!("  Server Key: {}", pub_b64);
-                println!("  PSK:        {}", psk_b64);
-                println!("  VPN IP:     {}", client.vpn_ip);
-
-                // JSON config for import
+                let conn_key = build_connection_key(args, &pub_b64, &psk_b64, &client.vpn_ip.to_string());
+                println!("══ Connection Key (paste into app) ══");
                 println!();
-                println!("── JSON Config (for app import) ──");
-                let config_json = serde_json::json!({
-                    "server_addr": if args.listen.starts_with("0.0.0.0") {
-                        format!("<YOUR_SERVER_IP>:{}", args.listen.split(':').last().unwrap_or("443"))
-                    } else {
-                        args.listen.clone()
-                    },
-                    "server_public_key": pub_b64,
-                    "psk": psk_b64,
-                    "vpn_ip": client.vpn_ip.to_string()
-                });
-                println!("{}", serde_json::to_string_pretty(&config_json).unwrap());
+                println!("{}", conn_key);
+                println!();
+            } else {
+                eprintln!("⚠  --key-file not provided, cannot generate connection key");
             }
         }
         Err(e) => {
@@ -250,24 +244,15 @@ fn handle_show_client(db: &ClientDatabase, id: &str, args: &ServerArgs) {
                 client.stats.last_connected
                     .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
                     .unwrap_or_else(|| "never".to_string()));
-            println!();
-            println!("  PSK: {}", psk_b64);
 
             if let Some(pub_key) = server_pub {
                 let pub_b64 = base64::engine::general_purpose::STANDARD.encode(&pub_key);
+                let conn_key = build_connection_key(args, &pub_b64, &psk_b64, &client.vpn_ip.to_string());
                 println!();
-                let config_json = serde_json::json!({
-                    "server_addr": if args.listen.starts_with("0.0.0.0") {
-                        format!("<YOUR_SERVER_IP>:{}", args.listen.split(':').last().unwrap_or("443"))
-                    } else {
-                        args.listen.clone()
-                    },
-                    "server_public_key": pub_b64,
-                    "psk": psk_b64,
-                    "vpn_ip": client.vpn_ip.to_string()
-                });
-                println!("── JSON Config ──");
-                println!("{}", serde_json::to_string_pretty(&config_json).unwrap());
+                println!("══ Connection Key ══");
+                println!();
+                println!("{}", conn_key);
+                println!();
             }
         }
         None => {

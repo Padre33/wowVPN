@@ -13,7 +13,10 @@
     <string name="hint_server_key">Server public key (Base64)</string>
     <string name="hint_psk">Client PSK (Base64)</string>
     <string name="hint_vpn_ip">VPN IP (e.g. 10.0.0.2)</string>
+    <string name="hint_connection_key">Connection key</string>
+    <string name="hint_connection_key_example">aivpn://…</string>
     <string name="error_fill_fields">Fill in server address and key</string>
+    <string name="error_invalid_connection_key">Invalid connection key</string>
     <string name="error_vpn_denied">VPN permission denied</string>
     <string name="error_invalid_key">Invalid key (need 32 bytes)</string>
     <string name="error_handshake">Handshake failed</string>
