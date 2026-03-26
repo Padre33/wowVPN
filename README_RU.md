@@ -77,9 +77,63 @@ sudo iptables -t nat -A POSTROUTING -s 10.0.0.0/24 -o eth0 -j MASQUERADE
 docker-compose up -d
 ```
 
+### 3.1 Управление клиентами
+
+AIVPN использует модель регистрации клиентов по аналогии с WireGuard/XRay: у каждого клиента — уникальный PSK, статический VPN IP и статистика трафика.
+
+Вся конфигурация упаковывается в один **ключ подключения** — одну строку, которую пользователь вставляет в приложение или CLI-клиент.
+
+```bash
+# Добавить клиента (выводит ключ подключения)
+docker exec aivpn-aivpn-server-1 aivpn-server \
+    --add-client "Телефон Алисы" \
+    --key-file /etc/aivpn/server.key \
+    --clients-db /etc/aivpn/clients.json
+
+# Вывод:
+# ✅ Client 'Телефон Алисы' created!
+#    ID:     a1b2c3d4e5f67890
+#    VPN IP: 10.0.0.2
+#
+# ══ Connection Key (paste into app) ══
+#
+# aivpn://eyJpIjoiMTAuMC4wLjIiLCJrIjoiLi4uIiwicCI6Ii4uLiIsInMiOiIxLjIuMy40OjQ0MyJ9
+
+# Список всех клиентов со статистикой
+docker exec aivpn-aivpn-server-1 aivpn-server \
+    --list-clients --clients-db /etc/aivpn/clients.json
+
+# Показать конкретного клиента (и его ключ подключения)
+docker exec aivpn-aivpn-server-1 aivpn-server \
+    --show-client "Телефон Алисы" \
+    --key-file /etc/aivpn/server.key \
+    --clients-db /etc/aivpn/clients.json
+
+# Удалить клиента
+docker exec aivpn-aivpn-server-1 aivpn-server \
+    --remove-client "Телефон Алисы" \
+    --clients-db /etc/aivpn/clients.json
+```
+
 ### 4. Клиент
 
-При старте сервер выводит свой публичный ключ в консоль. Скопируйте его и подставьте в команду запуска клиента:
+#### Ключ подключения (рекомендуется)
+
+Самый простой способ — вставить ключ подключения из `--add-client`:
+
+```bash
+sudo ./target/release/aivpn-client -k "aivpn://eyJp..."
+```
+
+Полный туннель:
+
+```bash
+sudo ./target/release/aivpn-client -k "aivpn://eyJp..." --full-tunnel
+```
+
+#### Ручной режим
+
+Также можно указать адрес и ключ сервера вручную (без PSK — для работы без регистрации):
 
 #### Linux
 
@@ -133,6 +187,14 @@ wintun.dll
 
 > Клиент автоматически настроит маршруты через `route add` и корректно откатит их при завершении.
 
+### 5. Android
+
+1. Установите APK (`aivpn-android/app/build/outputs/apk/debug/app-debug.apk`)
+2. Вставьте свой **ключ подключения** (`aivpn://...`) в поле ввода
+3. Нажмите **Подключить**
+
+Ключ подключения содержит всё: адрес сервера, публичный ключ, ваш PSK и VPN IP. Никакой ручной настройки.
+
 ## Кросс-компиляция
 
 Можно собирать клиент под любую платформу прямо со своей машины:
@@ -163,8 +225,10 @@ aivpn/
 │   ├── gateway.rs       # UDP-шлюз, MaskCatalog, resonance loop
 │   ├── neural.rs        # Baked Mask Encoder, AnomalyDetector
 │   ├── nat.rs           # NAT-форвардер (iptables)
+│   ├── client_db.rs     # База клиентов (PSK, статический IP, статистика)
 │   ├── key_rotation.rs  # Ротация сессионных ключей
 │   └── metrics.rs       # Prometheus-мониторинг
+├── aivpn-android/       # Android-клиент (Kotlin)
 ├── Dockerfile
 ├── docker-compose.yml
 └── build.sh

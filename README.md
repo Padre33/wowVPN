@@ -77,9 +77,63 @@ Or use Docker (everything is already configured in `docker-compose.yml`):
 docker-compose up -d
 ```
 
+### 3.1 Client Management
+
+AIVPN uses a client registration model similar to WireGuard/XRay: each client gets a unique PSK, a static VPN IP, and traffic statistics.
+
+All config is packed into a single **connection key** — one string that the user pastes into the app or CLI client.
+
+```bash
+# Add a new client (prints a connection key)
+docker exec aivpn-aivpn-server-1 aivpn-server \
+    --add-client "Alice Phone" \
+    --key-file /etc/aivpn/server.key \
+    --clients-db /etc/aivpn/clients.json
+
+# Output:
+# ✅ Client 'Alice Phone' created!
+#    ID:     a1b2c3d4e5f67890
+#    VPN IP: 10.0.0.2
+#
+# ══ Connection Key (paste into app) ══
+#
+# aivpn://eyJpIjoiMTAuMC4wLjIiLCJrIjoiLi4uIiwicCI6Ii4uLiIsInMiOiIxLjIuMy40OjQ0MyJ9
+
+# List all clients with traffic stats
+docker exec aivpn-aivpn-server-1 aivpn-server \
+    --list-clients --clients-db /etc/aivpn/clients.json
+
+# Show a specific client (and its connection key)
+docker exec aivpn-aivpn-server-1 aivpn-server \
+    --show-client "Alice Phone" \
+    --key-file /etc/aivpn/server.key \
+    --clients-db /etc/aivpn/clients.json
+
+# Remove a client
+docker exec aivpn-aivpn-server-1 aivpn-server \
+    --remove-client "Alice Phone" \
+    --clients-db /etc/aivpn/clients.json
+```
+
 ### 4. Client
 
-On startup, the server prints its public key to the console. Copy it and plug it into the client command:
+#### Connection Key (recommended)
+
+The easiest way — paste the connection key from `--add-client`:
+
+```bash
+sudo ./target/release/aivpn-client -k "aivpn://eyJp..."
+```
+
+Full tunnel:
+
+```bash
+sudo ./target/release/aivpn-client -k "aivpn://eyJp..." --full-tunnel
+```
+
+#### Manual mode
+
+You can also specify the server address and key manually (without PSK — for legacy/no-auth mode):
 
 #### Linux
 
@@ -133,6 +187,14 @@ Full tunnel:
 
 > The client auto-configures routes via `route add` and cleans them up on exit.
 
+### 5. Android
+
+1. Install the APK (`aivpn-android/app/build/outputs/apk/debug/app-debug.apk`)
+2. Paste your **connection key** (`aivpn://...`) into the single input field
+3. Tap **Connect**
+
+The connection key contains everything: server address, public key, your PSK, and VPN IP. No manual configuration needed.
+
 ## Cross-compilation
 
 Build the client for any platform from your current machine:
@@ -163,8 +225,10 @@ aivpn/
 │   ├── gateway.rs       # UDP gateway, MaskCatalog, resonance loop
 │   ├── neural.rs        # Baked Mask Encoder, AnomalyDetector
 │   ├── nat.rs           # NAT forwarder (iptables)
+│   ├── client_db.rs     # Client database (PSK, static IP, stats)
 │   ├── key_rotation.rs  # Session key rotation
 │   └── metrics.rs       # Prometheus monitoring
+├── aivpn-android/       # Android client (Kotlin)
 ├── Dockerfile
 ├── docker-compose.yml
 └── build.sh
