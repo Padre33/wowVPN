@@ -180,22 +180,28 @@ impl Session {
             DEFAULT_WINDOW_MS,
         );
         
-        // Pre-compute tags for next TAG_WINDOW_SIZE packets
+        // Pre-compute tags for next TAG_WINDOW_SIZE packets.
+        // Include adjacent time windows (tw-1, tw, tw+1) for clock skew
+        // tolerance between client and server.
         self.expected_tags.clear();
         for i in 0..TAG_WINDOW_SIZE {
+            let counter_val = self.counter + i as u64;
+            // Current window tag goes into expected_tags (used for counter lookup)
             let tag = crypto::generate_resonance_tag(
                 &self.keys.tag_secret,
-                self.counter + i as u64,
+                counter_val,
                 time_window,
             );
-            self.expected_tags.insert(self.counter + i as u64, tag);
+            self.expected_tags.insert(counter_val, tag);
         }
     }
     
     /// Validate received tag (constant-time)
-    /// Returns (counter, is_ratcheted_tag) if valid
+    /// Returns (counter, is_ratcheted_tag) if valid.
+    /// Checks the current time window first, then adjacent windows (±1)
+    /// for clock skew tolerance.
     pub fn validate_tag(&self, tag: &[u8; TAG_SIZE]) -> Option<(u64, bool)> {
-        // Check initial keys first
+        // Check initial keys — current time window (pre-computed)
         for (counter, expected) in &self.expected_tags {
             if bool::from(expected.ct_eq(tag)) {
                 // Check anti-replay
@@ -206,11 +212,48 @@ impl Session {
                 return Some((*counter, false));
             }
         }
+        // Check adjacent time windows (±1) on-the-fly for clock skew
+        let current_tw = crypto::compute_time_window(
+            crypto::current_timestamp_ms(),
+            DEFAULT_WINDOW_MS,
+        );
+        for tw_offset in [current_tw.wrapping_sub(1), current_tw.wrapping_add(1)] {
+            for i in 0..TAG_WINDOW_SIZE {
+                let counter_val = self.counter + i as u64;
+                let expected = crypto::generate_resonance_tag(
+                    &self.keys.tag_secret,
+                    counter_val,
+                    tw_offset,
+                );
+                if bool::from(expected.ct_eq(tag)) {
+                    let bit_index = i;
+                    if bit_index < 256 && self.received_bitmap.get_bit(bit_index) {
+                        return None;
+                    }
+                    return Some((counter_val, false));
+                }
+            }
+        }
         // Check ratcheted keys (only during transition, before ratchet is complete)
         if !self.is_ratcheted {
             for (counter, expected) in &self.ratcheted_expected_tags {
                 if bool::from(expected.ct_eq(tag)) {
                     return Some((*counter, true));
+                }
+            }
+            // Also check adjacent windows for ratcheted keys
+            if let Some(ratcheted_keys) = &self.ratcheted_keys {
+                for tw_offset in [current_tw.wrapping_sub(1), current_tw.wrapping_add(1)] {
+                    for i in 0..TAG_WINDOW_SIZE {
+                        let expected = crypto::generate_resonance_tag(
+                            &ratcheted_keys.tag_secret,
+                            i as u64,
+                            tw_offset,
+                        );
+                        if bool::from(expected.ct_eq(tag)) {
+                            return Some((i as u64, true));
+                        }
+                    }
                 }
             }
         }
@@ -328,33 +371,29 @@ impl SessionManager {
         }
     }
     
-    /// Create new session from initial packet
+    /// Create new session from initial packet.
+    /// NOTE: Does NOT remove old sessions for the same client IP.
+    /// The caller must call `cleanup_old_sessions_for_ip()` after
+    /// validating that the new session is legitimate (tag matches).
     pub fn create_session(
         &self,
         client_addr: SocketAddr,
         eph_pub: [u8; X25519_PUBLIC_KEY_SIZE],
         preshared_key: Option<[u8; 32]>,
     ) -> Result<Arc<Mutex<Session>>> {
-        // The current Android client configures a stable tunnel IP locally.
-        // When the same public client IP reconnects, reuse its prior VPN IP.
-        let same_ip_sessions: Vec<([u8; 16], Option<Ipv4Addr>)> = self.sessions.iter()
+        // Look for a reusable VPN IP from an existing session for the same
+        // client IP, but do NOT remove the old session yet — the caller
+        // will do that only after the handshake tag validates.
+        let reused_vpn_ip: Option<Ipv4Addr> = self.sessions.iter()
             .filter_map(|entry| {
                 let session = entry.value().lock();
                 if session.client_addr.ip() == client_addr.ip() {
-                    Some((*entry.key(), session.vpn_ip))
+                    session.vpn_ip
                 } else {
                     None
                 }
             })
-            .collect();
-
-        let reused_vpn_ip = if same_ip_sessions.len() == 1 {
-            let (old_session_id, vpn_ip) = same_ip_sessions[0];
-            self.remove_session(&old_session_id);
-            vpn_ip
-        } else {
-            None
-        };
+            .next();
 
         if self.sessions.len() >= MAX_SESSIONS {
             return Err(Error::Session("Max sessions reached".into()));
@@ -435,7 +474,10 @@ impl SessionManager {
         // Insert into session map
         self.sessions.insert(session_id, session.clone());
         
-        // Assign VPN IP and register mapping
+        // Assign VPN IP and register mapping.
+        // If we found a reusable IP from the same client, claim it now
+        // (the vpn_ip_map entry is overwritten; old session still
+        // exists but will be removed by the caller after validation).
         let vpn_ip = reused_vpn_ip.or_else(|| {
             let octet = self.next_ip_octet.fetch_add(1, Ordering::Relaxed);
             if octet <= 254 {
@@ -452,6 +494,52 @@ impl SessionManager {
         }
         
         Ok(session)
+    }
+
+    /// Remove all sessions for a given IP except the specified one.
+    /// Called after a new handshake is validated to clean up stale sessions.
+    pub fn cleanup_old_sessions_for_ip(
+        &self,
+        ip: &std::net::IpAddr,
+        keep_session_id: &[u8; 16],
+    ) {
+        let to_remove: Vec<[u8; 16]> = self.sessions.iter()
+            .filter_map(|entry| {
+                let session = entry.value().lock();
+                if session.client_addr.ip() == *ip && entry.key() != keep_session_id {
+                    Some(*entry.key())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for session_id in to_remove {
+            info!("Removing stale session for IP {} after successful re-handshake", ip);
+            self.remove_session(&session_id);
+        }
+    }
+
+    /// Rollback a session that was created but failed tag validation.
+    /// Restores vpn_ip_map to the old session that still owns that IP.
+    pub fn rollback_failed_session(&self, session_id: &[u8; 16]) {
+        // Grab the VPN IP before removal so we can restore the old mapping.
+        let vpn_ip = self.sessions.get(session_id)
+            .map(|e| e.value().lock().vpn_ip)
+            .flatten();
+
+        self.remove_session(session_id);
+
+        // If there is still another session that owns this VPN IP, restore it.
+        if let Some(vpn_ip) = vpn_ip {
+            for entry in self.sessions.iter() {
+                let sess = entry.value().lock();
+                if sess.vpn_ip == Some(vpn_ip) {
+                    self.vpn_ip_map.insert(vpn_ip, *entry.key());
+                    break;
+                }
+            }
+        }
     }
     
     /// Get session by tag (O(1) lookup)

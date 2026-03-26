@@ -252,6 +252,18 @@ impl Gateway {
             }
         }
         
+        // Spawn periodic session cleanup task (remove expired/idle sessions)
+        {
+            let sessions = self.session_manager.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(60)).await;
+                    sessions.cleanup_expired();
+                }
+            });
+            info!("Session cleanup task spawned (60s interval)");
+        }
+        
         // Start packet processing
         self.process_packets().await?;
         
@@ -545,12 +557,32 @@ impl Gateway {
                 None,
             )?;
             
-            // Validate the tag against the newly created session
-            let (counter, is_ratcheted) = {
+            // Validate the tag against the newly created session.
+            // If this fails, the packet was NOT a real handshake (e.g. a data
+            // packet whose tag expired). Roll back the garbage session so the
+            // real session is not destroyed.
+            let validation = {
                 let sess = session.lock();
                 sess.validate_tag(&tag)
-                    .ok_or(Error::InvalidPacket("Tag mismatch on new session"))?
             };
+            let (counter, is_ratcheted) = match validation {
+                Some(result) => result,
+                None => {
+                    let session_id = session.lock().session_id;
+                    self.session_manager.rollback_failed_session(&session_id);
+                    return Err(Error::InvalidPacket("Tag mismatch on new session"));
+                }
+            };
+            
+            // Tag is valid — this is a real handshake.
+            // Clean up any old sessions from the same client IP.
+            {
+                let session_id = session.lock().session_id;
+                self.session_manager.cleanup_old_sessions_for_ip(
+                    &client_addr.ip(),
+                    &session_id,
+                );
+            }
             
             // Send ServerHello for PFS ratchet + server authentication (CRIT-3 + HIGH-6)
             {
