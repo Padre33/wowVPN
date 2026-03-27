@@ -19,8 +19,18 @@ No need to compile — download and run:
 
 | Platform | File | Size | Notes |
 |----------|------|------|-------|
+| **macOS** | [aivpn-macos.dmg](releases/aivpn-macos.dmg) | ~1.8 MB | Menu bar app with RU/EN interface |
 | **Windows** | [aivpn-client.exe](releases/aivpn-client.exe) | ~6.4 MB | Requires [wintun.dll](https://www.wintun.net/) next to the exe |
 | **Android** | [aivpn-client.apk](releases/aivpn-client.apk) | ~6.5 MB | Install and paste your connection key |
+
+### Quick Start (macOS)
+1. Download and open `aivpn-macos.dmg`
+2. Drag **Aivpn.app** to Applications
+3. Launch — the app appears in the menu bar (no dock icon)
+4. Paste your connection key (`aivpn://...`) and click **Connect**
+5. Toggle 🇷🇺/🇬🇧 to switch language
+
+> ⚠️ The VPN client requires root privileges for TUN device. The app will prompt for password via `sudo`.
 
 ### Quick Start (Windows)
 1. Download `aivpn-client.exe` and [wintun.dll](https://www.wintun.net/)

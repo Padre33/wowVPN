@@ -69,3 +69,5 @@ gen/
 
 # Releases (pre-built binaries for download)
 !releases/
+!releases/*.dmg
+aivpn-macos/build/

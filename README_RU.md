@@ -19,8 +19,18 @@
 
 | Платформа | Файл | Размер | Примечания |
 |-----------|------|--------|------------|
+| **macOS** | [aivpn-macos.dmg](releases/aivpn-macos.dmg) | ~1.8 МБ | Приложение в menu bar с интерфейсом RU/EN |
 | **Windows** | [aivpn-client.exe](releases/aivpn-client.exe) | ~6.4 МБ | Требуется [wintun.dll](https://www.wintun.net/) рядом с exe |
 | **Android** | [aivpn-client.apk](releases/aivpn-client.apk) | ~6.5 МБ | Установите и вставьте ключ подключения |
+
+### Быстрый старт (macOS)
+1. Скачайте и откройте `aivpn-macos.dmg`
+2. Перетащите **Aivpn.app** в Applications
+3. Запустите — приложение появится в menu bar (без иконки в Dock)
+4. Вставьте ключ подключения (`aivpn://...`) и нажмите **Подключить**
+5. Нажмите 🇷🇺/🇬🇧 для переключения языка
+
+> ⚠️ VPN-клиенту требуются права root для создания TUN-устройства. Приложение запросит пароль через `sudo`.
 
 ### Быстрый старт (Windows)
 1. Скачайте `aivpn-client.exe` и [wintun.dll](https://www.wintun.net/)
