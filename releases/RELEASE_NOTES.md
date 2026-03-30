@@ -16,9 +16,16 @@
 ## 🖥️ macOS
 
 **Файл:** `aivpn-macos.dmg`  
-**Размер:** 2.2 MB  
+**Размер:** 3.6 MB (сжатый) / 7.8 MB (распакованный)  
 **Архитектура:** Universal Binary (arm64 + x86_64)  
 **Минимальная версия:** macOS 13.0+
+
+### Состав:
+- **Aivpn.app** — Swift UI приложение (Universal Binary)
+- **aivpn-client** — VPN клиент (Universal Binary, 6.3 MB)
+  - ✅ Поддержка Apple Silicon (M1/M2/M3)
+  - ✅ Поддержка Intel (x86_64)
+- **aivpn_helper.sh** — скрипт для sudo-запроса
 
 ### Установка:
 1. Откройте `aivpn-macos.dmg`
@@ -120,10 +127,10 @@ docker exec aivpn-server aivpn-server \
 
 | Платформа | Файл | Размер | Статус |
 |-----------|------|--------|--------|
-| macOS DMG | aivpn-macos.dmg | 2.2 MB | ✅ Готово |
+| macOS DMG | aivpn-macos.dmg | 3.6 MB | ✅ Universal (ARM+Intel) |
 | Windows EXE | aivpn-client.exe | 6.4 MB | ✅ Готово |
 | Android APK | aivpn-client.apk | 6.5 MB | ✅ Готово |
-| macOS Binary | aivpn-client-macos | 3.2 MB | ✅ Готово |
+| macOS Binary | aivpn-client-universal | 6.3 MB | ✅ Universal (ARM+Intel) |
 
 ---
 

@@ -60,13 +60,29 @@ echo "  ✅ $(file "$MACOS/Aivpn" | sed 's/.*: //')"
 
 # Copy aivpn-client binary into Resources
 echo "📦 Bundling aivpn-client binary..."
-CLIENT_BIN="$PROJECT_DIR/target/release/aivpn-client"
-if [ -f "$CLIENT_BIN" ]; then
-    cp "$CLIENT_BIN" "$RESOURCES/aivpn-client"
+# Check for universal binary first, then fall back to native builds
+CLIENT_BIN_UNIVERSAL="$PROJECT_DIR/releases/aivpn-client-universal"
+CLIENT_BIN_X86="$PROJECT_DIR/target/release/aivpn-client"
+CLIENT_BIN_ARM="$PROJECT_DIR/target/aarch64-apple-darwin/release/aivpn-client"
+
+if [ -f "$CLIENT_BIN_UNIVERSAL" ]; then
+    # Use pre-built universal binary
+    cp "$CLIENT_BIN_UNIVERSAL" "$RESOURCES/aivpn-client"
     chmod +x "$RESOURCES/aivpn-client"
-    echo "  ✅ aivpn-client bundled ($(file "$RESOURCES/aivpn-client" | sed 's/.*: //'))"
+    echo "  ✅ aivpn-client bundled (Universal Binary: $(file "$RESOURCES/aivpn-client" | sed 's/.*: //'))"
+elif [ -f "$CLIENT_BIN_X86" ] && [ -f "$CLIENT_BIN_ARM" ]; then
+    # Create universal binary on the fly
+    echo "  🔄 Creating Universal Binary from x86_64 + arm64..."
+    lipo -create "$CLIENT_BIN_X86" "$CLIENT_BIN_ARM" -output "$RESOURCES/aivpn-client"
+    chmod +x "$RESOURCES/aivpn-client"
+    echo "  ✅ aivpn-client bundled (Universal Binary: $(file "$RESOURCES/aivpn-client" | sed 's/.*: //'))"
+elif [ -f "$CLIENT_BIN_X86" ]; then
+    # Fallback to x86_64 only
+    cp "$CLIENT_BIN_X86" "$RESOURCES/aivpn-client"
+    chmod +x "$RESOURCES/aivpn-client"
+    echo "  ⚠️  aivpn-client bundled (x86_64 only)"
 else
-    echo "  ⚠️  aivpn-client not found at $CLIENT_BIN"
+    echo "  ⚠️  aivpn-client not found"
     echo "  Run 'cargo build --release --bin aivpn-client' first"
 fi
 
