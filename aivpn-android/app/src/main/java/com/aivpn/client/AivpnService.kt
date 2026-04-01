@@ -56,7 +56,7 @@ class AivpnService : VpnService() {
 
     // Tunnel resources
     private var vpnInterface: ParcelFileDescriptor? = null
-    private var udpSocket: DatagramSocket? = null
+    @Volatile private var udpSocket: DatagramSocket? = null
     private var tunIn: FileInputStream? = null
     private var tunOut: FileOutputStream? = null
 
@@ -70,7 +70,6 @@ class AivpnService : VpnService() {
     @Volatile private var savedServerKey: String? = null
     @Volatile private var savedPsk: String? = null
     @Volatile private var savedVpnIp: String? = null
-    @Volatile private var savedVpnIp6: String? = null
 
     // Traffic counters
     @Volatile private var totalUploadBytes: Long = 0
@@ -97,8 +96,7 @@ class AivpnService : VpnService() {
                 val serverKey = intent.getStringExtra("server_key") ?: return START_NOT_STICKY
                 val pskBase64 = intent.getStringExtra("psk")
                 val vpnIp  = intent.getStringExtra("vpn_ip")
-                val vpnIp6 = intent.getStringExtra("vpn_ip6")
-                startVpn(server, serverKey, pskBase64, vpnIp, vpnIp6)
+                startVpn(server, serverKey, pskBase64, vpnIp)
             }
             ACTION_DISCONNECT -> {
                 stopVpn()
@@ -111,8 +109,7 @@ class AivpnService : VpnService() {
         serverAddr: String,
         serverKeyBase64: String,
         pskBase64: String? = null,
-        vpnIp: String? = null,
-        vpnIp6: String? = null
+        vpnIp: String? = null
     ) {
         Log.d(TAG, "startVpn: server=$serverAddr")
 
@@ -120,7 +117,6 @@ class AivpnService : VpnService() {
         savedServerKey = serverKeyBase64
         savedPsk = pskBase64
         savedVpnIp  = vpnIp
-        savedVpnIp6 = vpnIp6
 
         manualDisconnect = false
         serviceJob?.cancel()
@@ -468,12 +464,6 @@ class AivpnService : VpnService() {
         statusCallback?.invoke(false, lastStatusText)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
-    }
-
-    private fun isVpnNetwork(network: Network): Boolean {
-        return (getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager)
-            .getNetworkCapabilities(network)
-            ?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
     }
 
     private suspend fun waitForNetwork(): Network {
