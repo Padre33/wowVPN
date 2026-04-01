@@ -43,6 +43,7 @@ class AivpnService : VpnService() {
         private const val HANDSHAKE_TIMEOUT_MS = 10_000L
         private const val SOCKET_TIMEOUT_MS = 5_000L
         private const val DEAD_TUNNEL_TIMEOUT_MS = 180_000L  // 3 min: tolerate longer radio/Doze pauses
+        private const val RX_SILENCE_TIMEOUT_MS  = 120_000L  // 2 min: detect dead NAT even when TX keepalives flow
         private const val INITIAL_RETRY_DELAY_MS = 500L
         private const val MAX_RETRY_DELAY_MS = 8_000L
         private const val REKEY_AFTER_TIME_MS = 1_800_000L  // 30 min: avoid reconnect every 3 min
@@ -349,10 +350,13 @@ class AivpnService : VpnService() {
                     trafficCallback?.invoke(totalUploadBytes, totalDownloadBytes)
                 }
             } catch (e: SocketTimeoutException) {
-                // Use max(rx, tx) so outbound keepalives count as activity.
-                // Prevents false dead-tunnel when server is silent but socket is live.
-                val lastActivity = maxOf(lastReceiveTime, lastSendTime)
-                if (System.currentTimeMillis() - lastActivity > DEAD_TUNNEL_TIMEOUT_MS) {
+                val now = System.currentTimeMillis()
+                // RX-only check: mobile NAT dies quickly; keepalive TX cannot mask server silence.
+                if (now - lastReceiveTime > RX_SILENCE_TIMEOUT_MS) {
+                    throw RuntimeException("No RX traffic for ${now - lastReceiveTime}ms")
+                }
+                // Fallback: both RX and TX silent (Doze, etc.).
+                if (maxOf(lastReceiveTime, lastSendTime).let { now - it > DEAD_TUNNEL_TIMEOUT_MS }) {
                     throw RuntimeException("Dead tunnel")
                 }
             } catch (e: Exception) {
