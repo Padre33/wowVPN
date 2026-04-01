@@ -160,7 +160,8 @@ class AivpnService : VpnService() {
                             retryDelayMs = INITIAL_RETRY_DELAY_MS
                         }
 
-                        statusCallback?.invoke(true, getString(R.string.status_reconnecting))
+                        lastStatusText = getString(R.string.status_reconnecting)
+                        statusCallback?.invoke(false, lastStatusText)
                         updateNotification(getString(R.string.notification_connecting))
                         Log.d(TAG, "Reconnecting in ${retryDelayMs}ms")
                         delay(retryDelayMs)
