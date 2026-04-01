@@ -13,6 +13,7 @@ import android.net.VpnService
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.selects.select
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -22,14 +23,13 @@ import java.net.InetSocketAddress
 import java.net.SocketTimeoutException
 
 /**
- * Android VPN service — WireGuard-like architecture.
+ * Android VPN service — simplified WireGuard-style architecture.
  *
- * Принципы:
- * - Один источник правды: корутина-цикл в [startVpn]
- * - Любая ошибка сокета/TUN → исключение → cleanup → переподключение
- * - Network callback просто закрывает сокет, остальное делает нормальный путь обработки ошибок
- * - Keepalive ТОЛЬКО для NAT, НЕ рвёт соединение
- * - Нет connectionGeneration, networkChanged, keepalivePending, сложного backoff
+ * Model:
+ * 1) One UDP socket
+ * 2) One TUN interface
+ * 3) Three loops (tun->udp, udp->tun, keepalive)
+ * 4) Any loop failure tears down all resources and reconnects
  */
 class AivpnService : VpnService() {
 
@@ -39,11 +39,13 @@ class AivpnService : VpnService() {
         private const val CHANNEL_ID = "aivpn_vpn"
         private const val NOTIFICATION_ID = 1
         private const val TUN_MTU = 1420
-        private const val KEEPALIVE_INTERVAL_MS = 10_000L // 10с — только для NAT
-        private const val SOCKET_TIMEOUT_MS = 5_000L     // таймаут receive
-        private const val DEAD_TUNNEL_TIMEOUT_MS = 15_000L // нет пакетов от сервера = туннель мёртв
-        private const val RETRY_DELAY_MS = 500L          // фиксированная задержка реконнекта
-        private const val NETWORK_DEBOUNCE_MS = 1_000L   // debounce для network callback
+        private const val KEEPALIVE_INTERVAL_MS = 10_000L
+        private const val HANDSHAKE_TIMEOUT_MS = 10_000L
+        private const val SOCKET_TIMEOUT_MS = 5_000L
+        private const val DEAD_TUNNEL_TIMEOUT_MS = 15_000L
+        private const val INITIAL_RETRY_DELAY_MS = 500L
+        private const val MAX_RETRY_DELAY_MS = 8_000L
+        private const val REKEY_AFTER_TIME_MS = 180_000L
         private const val TAG = "AivpnService"
 
         @Volatile var statusCallback: ((connected: Boolean, status: String) -> Unit)? = null
@@ -52,38 +54,39 @@ class AivpnService : VpnService() {
         @Volatile var lastStatusText: String = ""
     }
 
-    // ──── Tunnel resources ────
+    // Tunnel resources
     private var vpnInterface: ParcelFileDescriptor? = null
     private var udpSocket: DatagramSocket? = null
     private var tunIn: FileInputStream? = null
     private var tunOut: FileOutputStream? = null
 
-    // ──── Coroutine management ────
+    // Coroutine lifecycle
     private var serviceJob: Job? = null
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     @Volatile private var manualDisconnect = false
 
-    // ──── Network tracking ────
-    private var networkCallback: ConnectivityManager.NetworkCallback? = null
-    @Volatile private var currentNetwork: Network? = null
-    @Volatile private var lastNetworkChangeTime = 0L
-
-    // ──── Saved connection params for reconnect ────
+    // Saved params for reconnect
     @Volatile private var savedServerAddr: String? = null
     @Volatile private var savedServerKey: String? = null
     @Volatile private var savedPsk: String? = null
     @Volatile private var savedVpnIp: String? = null
 
-    // ──── Traffic counters ────
+    // Traffic counters
     @Volatile private var totalUploadBytes: Long = 0
     @Volatile private var totalDownloadBytes: Long = 0
 
-    // ──── Dead connection detection ────
+    // Outbound activity tracking for persistent keepalive
+    @Volatile private var lastSendTime = 0L
+
+    // Dead tunnel detection
     @Volatile private var lastReceiveTime = 0L
 
-    // ═══════════════════════════════════════════════
-    //  Lifecycle
-    // ═══════════════════════════════════════════════
+    // Whether the current session made it past handshake
+    @Volatile private var sessionEstablished = false
+
+    // Network change detection: signals active tunnel to tear down and reconnect
+    private val networkChangeChannel = Channel<Unit>(Channel.CONFLATED)
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
@@ -94,52 +97,48 @@ class AivpnService : VpnService() {
                 val vpnIp = intent.getStringExtra("vpn_ip")
                 startVpn(server, serverKey, pskBase64, vpnIp)
             }
-            ACTION_DISCONNECT -> stopVpn()
+            ACTION_DISCONNECT -> {
+                stopVpn()
+            }
         }
         return START_STICKY
     }
 
-    override fun onDestroy() {
-        manualDisconnect = true
-        serviceJob?.cancel()
-        serviceJob = null
-        closeTunnel()
-        unregisterNetworkCallback()
-        isRunning = false
-        super.onDestroy()
-    }
-
-    // ═══════════════════════════════════════════════
-    //  Main VPN loop
-    // ═══════════════════════════════════════════════
-
-    private fun startVpn(serverAddr: String, serverKeyBase64: String, pskBase64: String? = null, vpnIp: String? = null) {
+    private fun startVpn(
+        serverAddr: String,
+        serverKeyBase64: String,
+        pskBase64: String? = null,
+        vpnIp: String? = null
+    ) {
         Log.d(TAG, "startVpn: server=$serverAddr")
 
-        // Сохраняем параметры для переподключения
         savedServerAddr = serverAddr
         savedServerKey = serverKeyBase64
         savedPsk = pskBase64
         savedVpnIp = vpnIp
 
-        // Отменяем предыдущее подключение и чистим ресурсы
         manualDisconnect = false
         serviceJob?.cancel()
         serviceJob = null
         closeTunnel()
-        unregisterNetworkCallback()
 
-        registerNetworkCallback()
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification(getString(R.string.notification_connecting)))
 
         totalUploadBytes = 0
         totalDownloadBytes = 0
+        lastSendTime = 0L
+        sessionEstablished = false
+
+        unregisterNetworkCallback()
+        registerNetworkCallback()
 
         val job = serviceScope.launch {
+            var retryDelayMs = INITIAL_RETRY_DELAY_MS
             try {
                 while (isActive && !manualDisconnect) {
                     try {
+                        sessionEstablished = false
                         runTunnel()
                     } catch (e: CancellationException) {
                         throw e
@@ -150,22 +149,24 @@ class AivpnService : VpnService() {
 
                         if (manualDisconnect) break
 
-                        // Показываем "переподключается" но НЕ "отключено"
+                        if (sessionEstablished) {
+                            retryDelayMs = INITIAL_RETRY_DELAY_MS
+                        }
+
                         statusCallback?.invoke(true, getString(R.string.status_reconnecting))
                         updateNotification(getString(R.string.notification_connecting))
-                        Log.d(TAG, "Reconnecting in ${RETRY_DELAY_MS}ms...")
-                        delay(RETRY_DELAY_MS)
+                        Log.d(TAG, "Reconnecting in ${retryDelayMs}ms")
+                        delay(retryDelayMs)
+                        retryDelayMs = (retryDelayMs * 2).coerceAtMost(MAX_RETRY_DELAY_MS)
                     }
                 }
             } catch (e: CancellationException) {
                 Log.d(TAG, "Service cancelled")
-            } finally {
-                // Чистим только если мы всё ещё активный job
-                // (stopVpn/startVpn могли создать новый job)
+            }
+            finally {
                 if (serviceJob === coroutineContext[Job]) {
                     isRunning = false
                     closeTunnel()
-                    unregisterNetworkCallback()
                     serviceJob = null
                     if (!manualDisconnect) {
                         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -178,24 +179,18 @@ class AivpnService : VpnService() {
     }
 
     /**
-     * Одна сессия туннеля:
-     *   waitForNetwork → createSocket → handshake → createTUN → forwardPackets
-     *
-     * Любое исключение = сессия мертва, вызывающий код делает retry.
+     * One tunnel session: handshake -> TUN setup -> forwarding loops.
+     * Any exception means session is dead and caller will reconnect.
      */
     private suspend fun runTunnel() {
-        // 1. Ждём реальную (не VPN) сеть
-        val network = waitForActiveNetwork()
-        currentNetwork = network
-        Log.d(TAG, "Using network: $network")
+        val network = waitForNetwork()
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
-        // 2. Парсим адрес сервера
         val serverAddr = savedServerAddr ?: throw Exception("No server address")
         val parts = serverAddr.split(":")
         val host = parts[0]
         val port = parts.getOrElse(1) { "443" }.toInt()
 
-        // 3. Декодируем ключи
         val serverKeyBase64 = savedServerKey ?: throw Exception("No server key")
         val serverKey = android.util.Base64.decode(serverKeyBase64, android.util.Base64.DEFAULT)
         if (serverKey.size != 32) throw Exception("Invalid server key size: ${serverKey.size}")
@@ -205,78 +200,53 @@ class AivpnService : VpnService() {
             if (decoded.size == 32) decoded else null
         }
 
-        // 4. Создаём crypto
         val crypto = AivpnCrypto(serverKey, psk)
 
-        // 5. Создаём UDP сокет и привязываем к сети
         Log.d(TAG, "Creating UDP socket to $host:$port")
-        // Явно создаём новый socket с новым портом (не reuse!)
-        val socket = DatagramSocket(null)
-        socket.reuseAddress = false
-        socket.bind(null) // гарантирует случайный свободный порт
+        val socket = DatagramSocket()
+        if (!protect(socket)) {
+            socket.close()
+            throw RuntimeException("protect() failed")
+        }
 
-        // Проверяем что сеть не устарела между waitForActiveNetwork() и bindSocket()
-        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val activeNow = cm.activeNetwork
         if (network != activeNow) {
-            Log.d(TAG, "Network changed during setup (was $network, now $activeNow) — retrying")
             socket.close()
             throw RuntimeException("Stale network")
         }
 
-        // Проверяем что сеть реально имеет интернет (не captive portal, не переходное состояние)
-        val caps = cm.getNetworkCapabilities(network)
-        if (caps == null || !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
-            Log.d(TAG, "Network has no internet capability — retrying")
-            socket.close()
-            throw RuntimeException("Network has no internet")
-        }
-
-        // protect() ДО bindSocket() — чтобы socket не попал в VPN routing loop
-        protect(socket)
-
-        // bindSocket() ОБЯЗАТЕЛЕН — без него socket уйдёт в default network (возможно VPN → loop)
-        val bound = try {
-            network.bindSocket(socket)
-            true
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to bind socket to network: ${e.message}")
-            false
-        }
-        if (!bound) {
-            socket.close()
-            throw RuntimeException("Failed to bind socket to network $network")
-        }
-        Log.d(TAG, "Socket bound to network $network")
+        network.bindSocket(socket)
         socket.connect(InetSocketAddress(host, port))
-        socket.soTimeout = SOCKET_TIMEOUT_MS.toInt()
+        socket.soTimeout = HANDSHAKE_TIMEOUT_MS.toInt()
         udpSocket = socket
 
-        // 6. Handshake
-        Log.d(TAG, "Sending handshake...")
-        statusCallback?.invoke(true, getString(R.string.status_connecting))
-
+        Log.d(TAG, "Sending init handshake packet")
         val initPacket = crypto.buildInitPacket()
         socket.send(DatagramPacket(initPacket, initPacket.size))
+        lastSendTime = System.currentTimeMillis()
 
+        Log.d(TAG, "Waiting for ServerHello response")
         val recvBuf = ByteArray(2048)
         val response = DatagramPacket(recvBuf, recvBuf.size)
-        socket.receive(response)
-        Log.d(TAG, "ServerHello received (${response.length} bytes)")
+        try {
+            socket.receive(response)
+        } catch (e: SocketTimeoutException) {
+            throw RuntimeException("Handshake timeout (${HANDSHAKE_TIMEOUT_MS}ms)", e)
+        }
+        Log.d(TAG, "ServerHello received, length=${response.length}")
 
         val serverHelloData = recvBuf.copyOf(response.length)
         if (!crypto.processServerHello(serverHelloData)) {
-            throw Exception("Handshake failed (ServerHello validation)")
+            throw RuntimeException("Handshake failed (ServerHello validation)")
         }
         Log.d(TAG, "Handshake successful")
-
-        // Инициализируем dead connection detection
+        socket.soTimeout = SOCKET_TIMEOUT_MS.toInt()
+        sessionEstablished = true
+        lastSendTime = System.currentTimeMillis()
         lastReceiveTime = System.currentTimeMillis()
 
-        // 7. Создаём TUN интерфейс
         val tunAddress = savedVpnIp ?: "10.0.0.2"
-        Log.d(TAG, "Creating TUN interface: $tunAddress")
-
+        Log.d(TAG, "Establishing TUN interface with address $tunAddress")
         val builder = Builder()
             .setSession("AIVPN")
             .addAddress(tunAddress, 24)
@@ -286,8 +256,7 @@ class AivpnService : VpnService() {
             .setMtu(TUN_MTU)
             .setBlocking(true)
 
-        vpnInterface = builder.establish()
-            ?: throw Exception("Failed to establish TUN interface")
+        vpnInterface = builder.establish() ?: throw Exception("Failed to establish VPN interface")
         Log.d(TAG, "TUN interface established")
 
         val localTunIn = FileInputStream(vpnInterface!!.fileDescriptor)
@@ -300,31 +269,41 @@ class AivpnService : VpnService() {
         statusCallback?.invoke(true, lastStatusText)
         updateNotification(getString(R.string.notification_connected, host))
 
-        // 8. Форвардим пакеты до первой ошибки
         coroutineScope {
+            // Drain stale signals from a previous session before starting loops
+            while (networkChangeChannel.tryReceive().isSuccess) {}
+
             val tunToUdp = launch { tunToServer(localTunIn, socket, crypto) }
             val udpToTun = launch { serverToTun(socket, localTunOut, crypto) }
             val keepaliveLoop = launch { keepaliveToServer(socket, crypto) }
+            val rekeyLoop = launch { rekeyTimer() }
+            val netWatcher = launch {
+                networkChangeChannel.receive()
+                Log.d(TAG, "Network change detected, tearing down tunnel")
+            }
 
-            // Ждём завершения ЛЮБОЙ корутины (ошибка или отмена)
             select<Unit> {
                 tunToUdp.onJoin { }
                 udpToTun.onJoin { }
                 keepaliveLoop.onJoin { }
+                rekeyLoop.onJoin { }
+                netWatcher.onJoin { }
             }
 
-            // Одна корутина упала — отменяем остальные
+            // 1. Cancel children so isActive becomes false in all child coroutines.
             currentCoroutineContext().cancelChildren()
+            // 2. Close blocking I/O AFTER cancellation signal is sent.
+            //    Blocked tunIn.read() / socket.receive() throw IOException;
+            //    children suppress it because isActive is already false.
+            try { localTunIn.close() } catch (_: Exception) {}
+            try { socket.close() } catch (_: Exception) {}
         }
-        throw RuntimeException("Tunnel session ended")
+
+        throw RuntimeException("Tunnel forwarding stopped")
     }
 
-    // ═══════════════════════════════════════════════
-    //  Packet forwarding
-    // ═══════════════════════════════════════════════
-
     /**
-     * TUN → Server: читаем IP-пакеты из TUN, шифруем, отправляем UDP.
+     * TUN → Server: read IP packets from TUN, encrypt and send as UDP.
      */
     private suspend fun tunToServer(
         tunIn: FileInputStream,
@@ -335,12 +314,12 @@ class AivpnService : VpnService() {
         while (isActive) {
             try {
                 val n = tunIn.read(buf)
-                if (n <= 0) {
-                    throw RuntimeException("TUN read returned $n — TUN closed")
-                }
+                if (n < 0) throw RuntimeException("TUN closed")
+                if (n == 0) continue
                 if (n > 0) {
                     val encrypted = crypto.encryptDataPacket(buf.copyOf(n))
                     socket.send(DatagramPacket(encrypted, encrypted.size))
+                    lastSendTime = System.currentTimeMillis()
                     totalUploadBytes += n
                     trafficCallback?.invoke(totalUploadBytes, totalDownloadBytes)
                 }
@@ -351,7 +330,7 @@ class AivpnService : VpnService() {
     }
 
     /**
-     * Server → TUN: получаем UDP датаграммы, расшифровываем, пишем в TUN.
+     * Server → TUN: receive/decrypt UDP packets and write IP payload to TUN.
      */
     private suspend fun serverToTun(
         socket: DatagramSocket,
@@ -363,8 +342,6 @@ class AivpnService : VpnService() {
             try {
                 val pkt = DatagramPacket(buf, buf.size)
                 socket.receive(pkt)
-
-                // Любой пакет от сервера = туннель жив
                 lastReceiveTime = System.currentTimeMillis()
 
                 val decrypted = crypto.decryptDataPacket(buf.copyOf(pkt.length))
@@ -374,11 +351,9 @@ class AivpnService : VpnService() {
                     trafficCallback?.invoke(totalUploadBytes, totalDownloadBytes)
                 }
             } catch (e: SocketTimeoutException) {
-                // Таймаут receive — проверяем не мёртв ли туннель
                 val silence = System.currentTimeMillis() - lastReceiveTime
                 if (silence > DEAD_TUNNEL_TIMEOUT_MS) {
-                    Log.w(TAG, "Dead tunnel: no packets from server for ${silence}ms — reconnecting")
-                    throw RuntimeException("Dead tunnel (no server packets for ${silence}ms)")
+                    throw RuntimeException("Dead tunnel")
                 }
             } catch (e: Exception) {
                 if (isActive) throw e
@@ -387,160 +362,79 @@ class AivpnService : VpnService() {
     }
 
     /**
-     * Keepalive: ТОЛЬКО для поддержания NAT-маппинга.
-     * НЕ проверяет живость соединения — это делают socket errors.
+     * Keep NAT mapping alive; does not decide liveness.
      */
     private suspend fun keepaliveToServer(
         socket: DatagramSocket,
         crypto: AivpnCrypto
     ) = withContext(Dispatchers.IO) {
         while (isActive) {
-            delay(KEEPALIVE_INTERVAL_MS)
             try {
+                delay(KEEPALIVE_INTERVAL_MS)
+
+                val idleMs = System.currentTimeMillis() - lastSendTime
+                if (idleMs < KEEPALIVE_INTERVAL_MS) {
+                    continue
+                }
+
                 val keepalive = crypto.buildKeepalivePacket()
                 socket.send(DatagramPacket(keepalive, keepalive.size))
+                lastSendTime = System.currentTimeMillis()
             } catch (e: Exception) {
                 if (isActive) throw e
             }
         }
     }
 
-    // ═══════════════════════════════════════════════
-    //  Network
-    // ═══════════════════════════════════════════════
-
     /**
-     * Ждём появления реальной (не VPN) сети.
-     * Поллинг раз в секунду — просто и надёжно.
+     * Triggers a re-handshake for forward secrecy after REKEY_AFTER_TIME_MS.
+     * Completes normally; the outer select() tears down and reconnects.
      */
-    private suspend fun waitForActiveNetwork(): Network {
-        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        while (currentCoroutineContext().isActive) {
-            val network = cm.activeNetwork
-            if (network != null && !isVpnNetwork(network)) {
-                return network
-            }
-            Log.d(TAG, "No active network, waiting...")
-            delay(300L)
-        }
-        throw CancellationException("Cancelled while waiting for network")
+    private suspend fun rekeyTimer() {
+        delay(REKEY_AFTER_TIME_MS)
+        Log.d(TAG, "Rekey interval elapsed — initiating fresh handshake")
     }
 
-    /**
-     * Проверяем, является ли сеть VPN-сетью.
-     * Используется для фильтрации событий от VPN-интерфейса.
-     */
-    private fun isVpnNetwork(network: Network): Boolean {
-        return (getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager)
-            .getNetworkCapabilities(network)
-            ?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
-    }
-
-    /**
-     * Регистрируем callback для отслеживания изменений дефолтной сети.
-     *
-     * При изменении сети — просто закрываем туннель (сокет + TUN).
-     * Нормальный путь обработки ошибок в [runTunnel] сделает всё остальное:
-     * корутины упадут → select вернётся → cleanup → retry с новой сетью.
-     */
     private fun registerNetworkCallback() {
-        try {
-            unregisterNetworkCallback()
-            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-
-            networkCallback = object : ConnectivityManager.NetworkCallback() {
-                override fun onAvailable(network: Network) {
-                    // Фильтруем VPN-события — нас интересуют только реальные сети
-                    if (isVpnNetwork(network)) return
-                    Log.d(TAG, "onAvailable: $network (current=$currentNetwork)")
-
-                    if (!isRunning) {
-                        // Ещё не подключены — просто запоминаем сеть
-                        currentNetwork = network
-                        return
-                    }
-
-                    // Сеть действительно изменилась — закрываем туннель (с debounce)
-                    if (network != currentNetwork) {
-                        val now = System.currentTimeMillis()
-                        if (now - lastNetworkChangeTime < NETWORK_DEBOUNCE_MS) {
-                            Log.d(TAG, "Network change debounced (${now - lastNetworkChangeTime}ms)")
-                            currentNetwork = network
-                            return
-                        }
-                        lastNetworkChangeTime = now
-                        Log.d(TAG, "Network changed: $currentNetwork -> $network — closing tunnel")
-                        currentNetwork = network
-                        closeTunnel()
-                    }
-                }
-
-                override fun onLost(network: Network) {
-                    if (isVpnNetwork(network)) return
-                    Log.d(TAG, "onLost: $network (current=$currentNetwork)")
-
-                    // Текущая сеть потеряна — закрываем туннель
-                    if (network == currentNetwork && isRunning) {
-                        Log.d(TAG, "Current network lost — closing tunnel")
-                        currentNetwork = null
-                        closeTunnel()
-                    }
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                if (!isVpnNetwork(network)) {
+                    Log.d(TAG, "New network available — signaling tunnel restart")
+                    networkChangeChannel.trySend(Unit)
                 }
             }
-
-            cm.registerDefaultNetworkCallback(networkCallback!!)
+            override fun onLost(network: Network) {
+                if (!isVpnNetwork(network)) {
+                    Log.d(TAG, "Network lost — signaling tunnel restart")
+                    networkChangeChannel.trySend(Unit)
+                }
+            }
+        }
+        try {
+            cm.registerDefaultNetworkCallback(callback)
+            networkCallback = callback
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to register network callback", e)
+            Log.e(TAG, "Failed to register NetworkCallback: ${e.message}", e)
         }
     }
 
     private fun unregisterNetworkCallback() {
-        try {
-            networkCallback?.let { cb ->
+        networkCallback?.let {
+            try {
                 (getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager)
-                    .unregisterNetworkCallback(cb)
-                networkCallback = null
-            }
-        } catch (_: Exception) {}
-    }
-
-    // ═══════════════════════════════════════════════
-    //  Cleanup
-    // ═══════════════════════════════════════════════
-
-    /**
-     * Закрываем все ресурсы туннеля. Thread-safe:
-     * каждый close() синхронизирован на объекте, null-присвоения атомарны.
-     *
-     * Вызывается из:
-     * - корутины (IO thread) при ошибке
-     * - network callback (main thread) при смене сети
-     * - stopVpn() / onDestroy() (main thread)
-     */
-    private fun closeTunnel() {
-        // 1. Сначала закрываем VPN интерфейс (ParcelFileDescriptor) — это закрывает fd,
-        //    что ГАРАНТИРОВАННО разблокирует tunIn.read() в корутине tunToServer.
-        //    Без этого tunToServer может зависнуть навсегда даже если сокет уже мёртв.
-        try { vpnInterface?.close() } catch (_: Exception) {}
-        vpnInterface = null
-
-        // 2. Закрываем TUN потоки (fd уже закрыт, но streams тоже нужно закрыть)
-        try { tunIn?.close() } catch (_: Exception) {}
-        try { tunOut?.close() } catch (_: Exception) {}
-        tunIn = null
-        tunOut = null
-
-        // 3. Закрываем UDP сокет — разблокирует serverToTun (receive) и keepalive (send)
-        try { udpSocket?.close() } catch (_: Exception) {}
-        udpSocket = null
+                    .unregisterNetworkCallback(it)
+            } catch (_: Exception) {}
+            networkCallback = null
+        }
     }
 
     private fun stopVpn() {
         manualDisconnect = true
+        unregisterNetworkCallback()
         serviceJob?.cancel()
         serviceJob = null
         closeTunnel()
-        unregisterNetworkCallback()
         isRunning = false
         lastStatusText = getString(R.string.status_disconnected)
         statusCallback?.invoke(false, lastStatusText)
@@ -548,9 +442,45 @@ class AivpnService : VpnService() {
         stopSelf()
     }
 
-    // ═══════════════════════════════════════════════
-    //  Notifications
-    // ═══════════════════════════════════════════════
+    private fun isVpnNetwork(network: Network): Boolean {
+        return (getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager)
+            .getNetworkCapabilities(network)
+            ?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+    }
+
+    private suspend fun waitForNetwork(): Network {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        while (currentCoroutineContext().isActive) {
+            val network = cm.activeNetwork
+            if (network != null && !isVpnNetwork(network)) return network
+            delay(300L)
+        }
+        throw CancellationException("Cancelled while waiting for network")
+    }
+
+    private fun closeTunnel() {
+        try { vpnInterface?.close() } catch (_: Exception) {}
+        try { tunIn?.close() } catch (_: Exception) {}
+        try { tunOut?.close() } catch (_: Exception) {}
+        try { udpSocket?.close() } catch (_: Exception) {}
+
+        tunIn = null
+        tunOut = null
+        vpnInterface = null
+        udpSocket = null
+    }
+
+    override fun onDestroy() {
+        manualDisconnect = true
+        unregisterNetworkCallback()
+        serviceJob?.cancel()
+        serviceJob = null
+        closeTunnel()
+        isRunning = false
+        super.onDestroy()
+    }
+
+    // ──────────── Notifications ────────────
 
     private fun createNotificationChannel() {
         val channel = NotificationChannel(
@@ -559,7 +489,8 @@ class AivpnService : VpnService() {
         ).apply {
             description = getString(R.string.notification_channel_desc)
         }
-        getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+        val nm = getSystemService(NotificationManager::class.java)
+        nm.createNotificationChannel(channel)
     }
 
     private fun buildNotification(text: String): Notification {
@@ -578,7 +509,7 @@ class AivpnService : VpnService() {
     }
 
     private fun updateNotification(text: String) {
-        getSystemService(NotificationManager::class.java)
-            .notify(NOTIFICATION_ID, buildNotification(text))
+        val nm = getSystemService(NotificationManager::class.java)
+        nm.notify(NOTIFICATION_ID, buildNotification(text))
     }
 }

@@ -44,8 +44,13 @@ class AivpnCrypto(private val serverStaticPub: ByteArray, private val psk: ByteA
 
     // Monotonic counters
     private var sendCounter: Long = 0
-    private var recvCounter: Long = 0
     private var sendSeq: Int = 0
+
+    // Sliding-window anti-replay (64-bit bitmap).
+    // Accepts packets in [recvHighest-63 .. recvHighest+256];
+    // each set bit i means counter (recvHighest - i) was already received.
+    private var recvHighest: Long = -1L
+    private var recvWindow: Long = 0L
 
     init {
         // Clamp private key (X25519 convention)
@@ -108,7 +113,10 @@ class AivpnCrypto(private val serverStaticPub: ByteArray, private val psk: ByteA
 
             for (offset in longArrayOf(0, -1, 1)) {
                 val tw = timeWindow + offset
-                for (c in recvCounter until recvCounter + 256) {
+                val searchStart = if (recvHighest < 0L) 0L else maxOf(0L, recvHighest - 63L)
+                val searchEnd = maxOf(256L, recvHighest + 257L)
+                for (c in searchStart until searchEnd) {
+                    if (!isCounterNew(c)) continue
                     val expected = generateTag(tagSecret, c, tw)
                     if (expected.contentEquals(tag)) {
                         validCounter = c
@@ -152,7 +160,8 @@ class AivpnCrypto(private val serverStaticPub: ByteArray, private val psk: ByteA
 
             // Reset counters for the new epoch
             sendCounter = 0
-            recvCounter = 0
+            recvHighest = -1L
+            recvWindow = 0L
 
             true
         } catch (e: Exception) {
@@ -184,7 +193,10 @@ class AivpnCrypto(private val serverStaticPub: ByteArray, private val psk: ByteA
 
         for (offset in longArrayOf(0, -1, 1)) {
             val tw = timeWindow + offset
-            for (c in recvCounter until recvCounter + 256) {
+            val searchStart = if (recvHighest < 0L) 0L else maxOf(0L, recvHighest - 63L)
+            val searchEnd = maxOf(256L, recvHighest + 257L)
+            for (c in searchStart until searchEnd) {
+                if (!isCounterNew(c)) continue
                 val expected = generateTag(tagSecret, c, tw)
                 if (expected.contentEquals(tag)) {
                     validCounter = c
@@ -211,11 +223,34 @@ class AivpnCrypto(private val serverStaticPub: ByteArray, private val psk: ByteA
         if (inner.size < INNER_HEADER_SIZE) return null
         val innerType = inner[0].toInt() and 0xFF
 
-        recvCounter = validCounter + 1
+        markCounter(validCounter)
 
         return when (innerType) {
             0x01 -> inner.copyOfRange(INNER_HEADER_SIZE, inner.size) // Data → IP packet
             else -> null // Control packets handled separately
+        }
+    }
+
+    // ──────────── Sliding-window anti-replay ────────────
+
+    /** Returns true if counter c has not yet been seen and is within the window. */
+    private fun isCounterNew(c: Long): Boolean {
+        if (c > recvHighest) return true
+        val diff = recvHighest - c
+        if (diff >= 64L) return false
+        return (recvWindow ushr diff.toInt()) and 1L == 0L
+    }
+
+    /** Marks counter c as received in the sliding window. */
+    private fun markCounter(c: Long) {
+        if (c > recvHighest) {
+            val shift = c - recvHighest
+            recvWindow = if (shift >= 64L) 0L else recvWindow shl shift.toInt()
+            recvWindow = recvWindow or 1L
+            recvHighest = c
+        } else {
+            val diff = (recvHighest - c).toInt()
+            if (diff < 64) recvWindow = recvWindow or (1L shl diff)
         }
     }
 
