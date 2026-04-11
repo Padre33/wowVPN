@@ -15,7 +15,7 @@
     <string name="hint_psk">Client PSK (Base64)</string>
     <string name="hint_vpn_ip">VPN IP (e.g. 10.0.0.2)</string>
     <string name="hint_connection_key">Connection key</string>
-    <string name="hint_connection_key_example">aivpn://…</string>
+    <string name="hint_connection_key_example">shade://…</string>
     <string name="error_fill_fields">Fill in server address and key</string>
     <string name="error_invalid_connection_key">Invalid connection key</string>
     <string name="error_vpn_denied">VPN permission denied</string>
@@ -35,7 +35,7 @@
     <string name="dialog_add_profile">Add Connection Key</string>
     <string name="dialog_edit_profile">Edit Connection Key</string>
     <string name="hint_profile_name">Name (e.g. Server 1)</string>
-    <string name="hint_profile_key">Connection key (aivpn://…)</string>
+    <string name="hint_profile_key">Connection key (shade://…)</string>
     <string name="btn_save">Save</string>
     <string name="btn_cancel">Cancel</string>
     <string name="btn_delete">Delete</string>

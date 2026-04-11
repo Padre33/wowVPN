@@ -15,7 +15,7 @@
     <string name="hint_psk">PSK клиента (Base64)</string>
     <string name="hint_vpn_ip">VPN IP (напр. 10.0.0.2)</string>
     <string name="hint_connection_key">Ключ подключения</string>
-    <string name="hint_connection_key_example">aivpn://…</string>
+    <string name="hint_connection_key_example">shade://…</string>
     <string name="error_fill_fields">Укажите адрес сервера и ключ</string>
     <string name="error_invalid_connection_key">Неверный ключ подключения</string>
     <string name="error_vpn_denied">Доступ к VPN отклонён</string>
@@ -35,7 +35,7 @@
     <string name="dialog_add_profile">Добавить ключ подключения</string>
     <string name="dialog_edit_profile">Редактировать ключ</string>
     <string name="hint_profile_name">Название (напр. Сервер 1)</string>
-    <string name="hint_profile_key">Ключ подключения (aivpn://…)</string>
+    <string name="hint_profile_key">Ключ подключения (shade://…)</string>
     <string name="btn_save">Сохранить</string>
     <string name="btn_cancel">Отмена</string>
     <string name="btn_delete">Удалить</string>

@@ -4,7 +4,7 @@ import Foundation
 struct ConnectionKey: Identifiable, Codable, Equatable {
     let id: String  // UUID для идентификации
     var name: String  // Пользовательское имя
-    let keyValue: String  // Сам ключ (без aivpn://)
+    let keyValue: String  // Сам ключ (без shade://)
     let serverAddress: String?  // Извлеченный адрес сервера
     let vpnIP: String?  // Извлеченный VPN IP
     
@@ -12,7 +12,7 @@ struct ConnectionKey: Identifiable, Codable, Equatable {
         self.id = id
         self.name = name
         self.keyValue = keyValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "aivpn://", with: "")
+            .replacingOccurrences(of: "shade://", with: "")
         
         // Извлекаем данные из ключа (URL-safe base64 без padding)
         var server: String? = nil
@@ -40,7 +40,7 @@ struct ConnectionKey: Identifiable, Codable, Equatable {
     
     /// Полный ключ с префиксом
     var fullKey: String {
-        return "aivpn://\(keyValue)"
+        return "shade://\(keyValue)"
     }
     
     /// Отображаемое имя с сервером
@@ -99,7 +99,7 @@ class KeychainStorage: ObservableObject {
     func addKey(name: String, keyValue: String) -> ConnectionKey? {
         // Проверить дубликат по значению ключа
         if keys.contains(where: { $0.keyValue == keyValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "aivpn://", with: "") }) {
+            .replacingOccurrences(of: "shade://", with: "") }) {
             return nil
         }
         
@@ -130,7 +130,7 @@ class KeychainStorage: ObservableObject {
         }
         
         let normalizedKey = keyValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "aivpn://", with: "")
+            .replacingOccurrences(of: "shade://", with: "")
         
         // Проверить дубликат (если ключ меняем на другой существующий)
         if normalizedKey != keys[index].keyValue &&

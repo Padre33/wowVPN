@@ -57,7 +57,7 @@ class VPNManager: ObservableObject {
         // Для обратной совместимости: если есть старый ключ и нет новых, добавить его
         if let raw = defaults.string(forKey: "connection_key"), !raw.isEmpty {
             let keyValue = raw.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
-                .replacingOccurrences(of: "aivpn://", with: "")
+                .replacingOccurrences(of: "shade://", with: "")
             if KeychainStorage.shared.keys.isEmpty {
                 KeychainStorage.shared.addKey(name: "Default", keyValue: keyValue)
                 selectedKeyId = KeychainStorage.shared.selectedKeyId
@@ -240,7 +240,7 @@ class VPNManager: ObservableObject {
         guard !isConnecting else { return }
 
         let normalizedKey = key.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
-            .replacingOccurrences(of: "aivpn://", with: "")
+            .replacingOccurrences(of: "shade://", with: "")
 
         savedKey = normalizedKey
         saveKey(normalizedKey)

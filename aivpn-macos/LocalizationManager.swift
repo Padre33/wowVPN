@@ -20,8 +20,8 @@ class LocalizationManager: ObservableObject {
             "ru": "Отключено"
         ],
         "enter_key": [
-            "en": "Connection key (aivpn://...)",
-            "ru": "Ключ подключения (aivpn://...)"
+            "en": "Connection key (shade://...)",
+            "ru": "Ключ подключения (shade://...)"
         ],
         "no_key": [
             "en": "No connection key set",

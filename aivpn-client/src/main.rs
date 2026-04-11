@@ -1,4 +1,4 @@
-//! AIVPN Client Binary - Full Implementation
+//! ShadeVPN Client Binary - Full Implementation
 
 use aivpn_client::AivpnClient;
 use aivpn_client::client::ClientConfig;
@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use base64::Engine;
 
-/// AIVPN Client - Censorship-resistant VPN client
+/// ShadeVPN Client - Censorship-resistant VPN client
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct ClientArgs {
@@ -23,7 +23,7 @@ pub struct ClientArgs {
     #[arg(long)]
     pub server_key: Option<String>,
 
-    /// Connection key (aivpn://...) — contains server, key, PSK, VPN IP
+    /// Connection key (shade://...) — contains server, key, PSK, VPN IP
     #[arg(short = 'k', long)]
     pub connection_key: Option<String>,
 
@@ -72,7 +72,7 @@ async fn main() {
     
     // Parse connection key or individual args
     let (server_addr, server_key_b64, psk_bytes, tun_addr) = if let Some(ref conn_key) = args.connection_key {
-        let payload = conn_key.trim().strip_prefix("aivpn://").unwrap_or(conn_key.trim());
+        let payload = conn_key.trim().strip_prefix("shade://").unwrap_or(conn_key.trim());
         let json_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(payload)
             .unwrap_or_else(|e| {
@@ -109,7 +109,7 @@ async fn main() {
         (server, key, None, args.tun_addr.clone())
     };
     
-    info!("AIVPN Client v{}", env!("CARGO_PKG_VERSION"));
+    info!("ShadeVPN Client v{}", env!("CARGO_PKG_VERSION"));
     info!("Connecting to server: {}", server_addr);
     
     // Parse server key
@@ -178,8 +178,8 @@ async fn main() {
                 info!("Client initialized successfully (TUN: {})", tun_name);
                 
                 // Write initial stats file
-                let _ = std::fs::write("/var/run/aivpn/traffic.stats", "sent:0,received:0");
-                let _ = std::fs::write("/tmp/aivpn-traffic.stats", "sent:0,received:0");
+                let _ = std::fs::write("/var/run/shadevpn/traffic.stats", "sent:0,received:0");
+                let _ = std::fs::write("/tmp/shadevpn-traffic.stats", "sent:0,received:0");
 
                 match client.run(shutdown.clone()).await {
                     Ok(()) => break,

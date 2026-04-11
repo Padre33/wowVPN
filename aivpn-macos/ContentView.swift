@@ -185,7 +185,7 @@ struct ContentView: View {
                     SecureField(loc.t("enter_key"), text: $connectionKey)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(size: 10))
-                        .help("aivpn://...")
+                        .help("shade://...")
 
                     HStack {
                         Toggle(loc.t("full_tunnel"), isOn: $fullTunnel)

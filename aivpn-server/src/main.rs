@@ -1,4 +1,4 @@
-//! AIVPN Server Binary
+//! ShadeVPN Server Binary
 
 use aivpn_server::{AivpnServer, ServerArgs, ClientDatabase};
 use aivpn_server::gateway::GatewayConfig;
@@ -50,7 +50,7 @@ async fn main() {
         )
         .init();
 
-    info!("AIVPN Server v{}", env!("CARGO_PKG_VERSION"));
+    info!("ShadeVPN Server v{}", env!("CARGO_PKG_VERSION"));
     info!("Starting server...");
     info!("Listening on: {}", args.listen);
     info!("Registered clients: {}", client_db.list_clients().len());
@@ -126,7 +126,7 @@ fn load_server_public_key(args: &ServerArgs) -> Option<[u8; 32]> {
     })
 }
 
-/// Build a connection key: aivpn://BASE64({"s":"host:port","k":"...","p":"...","i":"..."})
+/// Build a connection key: shade://BASE64({"s":"host:port","k":"...","p":"...","i":"..."})
 fn build_connection_key(args: &ServerArgs, server_ip: &str, server_pub_b64: &str, psk_b64: &str, vpn_ip: &str) -> String {
     use base64::Engine;
     let server_addr = build_connection_server_addr(args, server_ip);
@@ -138,7 +138,7 @@ fn build_connection_key(args: &ServerArgs, server_ip: &str, server_pub_b64: &str
     });
     let json_bytes = serde_json::to_string(&json).unwrap();
     let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(json_bytes.as_bytes());
-    format!("aivpn://{}", encoded)
+    format!("shade://{}", encoded)
 }
 
 fn build_connection_server_addr(args: &ServerArgs, server_ip: &str) -> String {
@@ -180,7 +180,7 @@ fn handle_add_client(db: &ClientDatabase, name: &str, args: &ServerArgs) {
                 }
                 if args.server_ip.is_none() {
                     eprintln!("⚠  --server-ip not provided, cannot generate connection key");
-                    eprintln!("   Use: --server-ip YOUR_PUBLIC_IP or set AIVPN_SERVER_IP env var");
+                    eprintln!("   Use: --server-ip YOUR_PUBLIC_IP or set SHADEVPN_SERVER_IP env var");
                 }
             }
         }
@@ -220,7 +220,7 @@ fn handle_list_clients(db: &ClientDatabase) {
     if clients.is_empty() {
         println!("No registered clients.");
         println!();
-        println!("Add a client: aivpn-server --add-client \"Phone\" --key-file /etc/aivpn/server.key");
+        println!("Add a client: shade-server --add-client \"Phone\" --key-file /etc/shadevpn/server.key");
         return;
     }
 
@@ -334,7 +334,7 @@ mod tests {
     fn build_connection_key_embeds_normalized_server_addr() {
         let args = test_args("0.0.0.0:443");
         let key = build_connection_key(&args, "203.0.113.10:8443", "server-key", "psk", "10.0.0.2");
-        let payload = key.strip_prefix("aivpn://").unwrap();
+        let payload = key.strip_prefix("shade://").unwrap();
         let json_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(payload)
             .unwrap();

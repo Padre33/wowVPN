@@ -10,7 +10,7 @@ impl Lang {
     pub fn load() -> Self {
         let path = dirs::data_local_dir()
             .unwrap_or_default()
-            .join("AIVPN")
+            .join("ShadeVPN")
             .join("lang.txt");
         if let Ok(v) = std::fs::read_to_string(&path) {
             match v.trim() {
@@ -24,7 +24,7 @@ impl Lang {
     pub fn save(&self) {
         let path = dirs::data_local_dir()
             .unwrap_or_default()
-            .join("AIVPN")
+            .join("ShadeVPN")
             .join("lang.txt");
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
@@ -82,8 +82,8 @@ pub fn t(lang: Lang, key: &str) -> &'static str {
         (Lang::Ru, "add_key") => "Добавить ключ",
         (Lang::En, "key_name") => "Name",
         (Lang::Ru, "key_name") => "Название",
-        (Lang::En, "key_value") => "Key (aivpn://...)",
-        (Lang::Ru, "key_value") => "Ключ (aivpn://...)",
+        (Lang::En, "key_value") => "Key (shade://...)",
+        (Lang::Ru, "key_value") => "Ключ (shade://...)",
         (Lang::En, "save") => "Save",
         (Lang::Ru, "save") => "Сохранить",
         (Lang::En, "cancel") => "Cancel",

@@ -367,12 +367,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Parse connection key: aivpn://BASE64URL({"s":"host:port","k":"...","p":"...","i":"..."})
+     * Parse connection key: shade://BASE64URL({"s":"host:port","k":"...","p":"...","i":"..."})
      * Returns (server, serverKey, psk, vpnIp) or null on failure.
      */
     private fun parseConnectionKey(key: String): Array<String>? {
         val raw = key.trim()
-        val payload = if (raw.startsWith("aivpn://")) raw.removePrefix("aivpn://") else raw
+        val payload = if (raw.startsWith("shade://")) raw.removePrefix("shade://") else raw
         return try {
             // Decode URL-safe base64 (no padding)
             val jsonBytes = android.util.Base64.decode(payload,

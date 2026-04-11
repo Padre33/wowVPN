@@ -321,7 +321,7 @@ fn draw_key_form(ui: &mut egui::Ui, app: &mut AivpnApp) {
             ui.add(
                 egui::TextEdit::singleline(&mut app.new_key_value)
                     .desired_width(f32::INFINITY)
-                    .hint_text("aivpn://..."),
+                    .hint_text("shade://..."),
             );
 
             ui.add_space(6.0);

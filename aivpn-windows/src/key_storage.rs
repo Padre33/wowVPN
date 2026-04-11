@@ -1,6 +1,6 @@
 //! Connection key storage
 //!
-//! Stores keys in JSON file at %APPDATA%/AIVPN/keys.json
+//! Stores keys in JSON file at %APPDATA%/ShadeVPN/keys.json
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -17,7 +17,7 @@ pub struct ConnectionKey {
 
 impl ConnectionKey {
     pub fn from_key_string(name: &str, key: &str) -> Option<Self> {
-        let payload = key.trim().strip_prefix("aivpn://").unwrap_or(key.trim());
+        let payload = key.trim().strip_prefix("shade://").unwrap_or(key.trim());
         let json_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(payload)
             .ok()?;
@@ -134,7 +134,7 @@ impl KeyStorage {
     fn storage_path() -> PathBuf {
         dirs::data_local_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("AIVPN")
+            .join("ShadeVPN")
             .join("keys.json")
     }
 }
