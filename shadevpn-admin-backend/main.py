@@ -362,6 +362,16 @@ def list_clients(db: Session = Depends(get_db)):
         is_online = LIVE_CLIENT_STATUS.get(c.id, False)
         live_usage = LIVE_CLIENT_TRAFFIC.get(c.id, c.data_usage)
 
+        # Build subscription link if sub_token exists
+        if c.sub_token:
+            server_ip = "185.204.52.135"
+            sub_url = f"http://{server_ip}/api/sub/{c.sub_token}"
+            sub_payload = json.dumps({"sub": sub_url}, separators=(',', ':'))
+            sub_b64 = base64.urlsafe_b64encode(sub_payload.encode()).rstrip(b'=').decode()
+            shade_link = f"shade://{sub_b64}"
+        else:
+            shade_link = c.psk
+
         result.append({
             "id": c.id, "username": c.name,
             "telegramId": c.telegram_id or "—",
@@ -370,7 +380,7 @@ def list_clients(db: Session = Depends(get_db)):
             "subscriptionEnd": c.subscription_end.strftime("%Y-%m-%d") if c.subscription_end else "Безлимит",
             "status": "online" if c.enabled else "offline",
             "isOnline": is_online,
-            "shadeLink": c.psk,
+            "shadeLink": shade_link,
             "vpnIp": c.vpn_ip,
             "createdAt": c.created_at.strftime("%Y-%m-%d %H:%M") if c.created_at else "",
             "groupName": group.name if group else "—",
@@ -422,7 +432,7 @@ def create_client(body: ClientCreate, db: Session = Depends(get_db)):
     
     # 5. Build the subscription shade:// key
     server_ip = "185.204.52.135"
-    sub_url = f"http://{server_ip}:8443/api/sub/{sub_token}"
+    sub_url = f"http://{server_ip}/api/sub/{sub_token}"
     sub_payload = json.dumps({"sub": sub_url}, separators=(',', ':'))
     sub_b64 = base64.urlsafe_b64encode(sub_payload.encode()).rstrip(b'=').decode()
     sub_shade_link = f"shade://{sub_b64}"
@@ -515,8 +525,18 @@ def get_client_qr(cid: str, db: Session = Depends(get_db)):
         from fastapi.responses import StreamingResponse
     except ImportError:
         raise HTTPException(500, "Библиотека qrcode не установлена (pip install qrcode[pil])")
-        
-    img = qrcode.make(c.psk)
+    
+    # Use subscription link if available
+    if c.sub_token:
+        server_ip = "185.204.52.135"
+        sub_url = f"http://{server_ip}/api/sub/{c.sub_token}"
+        sub_payload = json.dumps({"sub": sub_url}, separators=(',', ':'))
+        sub_b64 = base64.urlsafe_b64encode(sub_payload.encode()).rstrip(b'=').decode()
+        qr_content = f"shade://{sub_b64}"
+    else:
+        qr_content = c.psk
+    
+    img = qrcode.make(qr_content)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     buf.seek(0)
