@@ -759,7 +759,7 @@ def get_subscription(sub_token: str, db: Session = Depends(get_db)):
             "name": f"{node.name} {flag}",
             "country": country,
             "flag": flag,
-            "key": ""  # Placeholder — keys will be generated when real servers are deployed
+            "key": client.psk  # Use primary key for now; each node will get its own key when deployed
         })
     
     return {

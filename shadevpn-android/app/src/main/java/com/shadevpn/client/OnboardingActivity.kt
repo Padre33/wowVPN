@@ -228,7 +228,6 @@ class OnboardingActivity : AppCompatActivity() {
     }
 
     private fun activateSubscription(subUrl: String) {
-        Toast.makeText(this, "Загрузка серверов...", Toast.LENGTH_SHORT).show()
 
         // Save the subscription URL for future auto-refreshes
         SecureStorage.saveSubscriptionUrl(this, subUrl)
@@ -266,9 +265,6 @@ class OnboardingActivity : AppCompatActivity() {
 
                 SecureStorage.saveProfiles(this@OnboardingActivity, profiles)
                 SecureStorage.saveActiveProfileId(this@OnboardingActivity, profiles.first().id)
-
-                Toast.makeText(this@OnboardingActivity,
-                    "Загружено ${profiles.size} серверов!", Toast.LENGTH_SHORT).show()
 
                 // Go to main screen
                 startActivity(Intent(this@OnboardingActivity, MainActivity::class.java).apply {
