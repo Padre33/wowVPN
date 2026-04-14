@@ -46,6 +46,7 @@ def parse_bytes(s):
 
 async def traffic_collector():
     """Каждые 10 секунд читает live статистику из ОЗУ ядра и копит трафик"""
+    first_run = True
     while True:
         try:
             cmd = ["/opt/shadevpn/target/release/aivpn-server", "--list-clients", "--clients-db", "/etc/shadevpn/clients.json"]
@@ -59,7 +60,6 @@ async def traffic_collector():
                 parts = re.split(r'\s{2,}', line.strip())
                 if len(parts) >= 7:
                     cid = parts[0]
-                    # Нас интересует LAST SEEN, который в самом конце
                     last_seen_str = parts[-1].strip()
                     upload_str = parts[4]
                     download_str = parts[5]
@@ -67,9 +67,7 @@ async def traffic_collector():
                     is_online = False
                     if last_seen_str and last_seen_str != "never":
                         try:
-                            # last_seen_str typically looks like "2026-04-13 14:03" (UTC from Rust binary)
                             dt = datetime.strptime(last_seen_str, "%Y-%m-%d %H:%M")
-                            # Server local time is EEST (UTC+3), but Rust output is UTC.
                             if (datetime.utcnow() - dt).total_seconds() <= 300:
                                 is_online = True
                         except Exception as e:
@@ -78,8 +76,14 @@ async def traffic_collector():
                     bi = parse_bytes(download_str)
                     bo = parse_bytes(upload_str)
 
+                    # Если это первый запуск коллектора - просто запоминаем стартовые значения.
+                    if first_run:
+                        LAST_TRAFFIC_STATE[cid] = {"in": bi, "out": bo}
+                        LIVE_CLIENT_STATUS[cid] = is_online
+                        continue
+
                     # Дельта-трекинг
-                    prev = LAST_TRAFFIC_STATE.get(cid, {"in": 0.0, "out": 0.0})
+                    prev = LAST_TRAFFIC_STATE.get(cid, {"in": bi, "out": bo})
                     delta_in = bi - prev["in"]
                     delta_out = bo - prev["out"]
                     
@@ -88,7 +92,7 @@ async def traffic_collector():
 
                     LIVE_CLIENT_STATUS[cid] = is_online
                     
-                    # Если счетчик меньше предыдущего (сессия перезапустилась)
+                    # Если счетчик меньше предыдущего (сессия перезапустилась ядром)
                     if delta_in < 0: delta_in = bi
                     if delta_out < 0: delta_out = bo
                     
@@ -102,7 +106,6 @@ async def traffic_collector():
                             c.data_usage += total_delta_gb
                             LIVE_CLIENT_TRAFFIC[cid] = c.data_usage
                             
-                            # Снапшот для графиков
                             now = datetime.utcnow()
                             snap = TrafficSnapshotDB(
                                 client_id=c.id, timestamp=now,
@@ -111,6 +114,7 @@ async def traffic_collector():
                             db.add(snap)
             db.commit()
             db.close()
+            first_run = False
         except Exception as e:
             logging.error(f"Live collector warn: {e}")
             
@@ -318,7 +322,8 @@ def traffic_chart_24h(db: Session = Depends(get_db)):
         bi = row.bi or 0
         bo = row.bo or 0
         gb = round((bi + bo) / (1024**3), 3)
-        result.append({"time": h_start.strftime("%H:%M"), "traffic": gb})
+        h_start_msk = h_start + timedelta(hours=3)
+        result.append({"time": h_start_msk.strftime("%H:%M"), "traffic": gb})
     return result
 
 
