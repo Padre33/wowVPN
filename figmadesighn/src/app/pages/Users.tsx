@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
-import { Plus, Trash2, RefreshCw, Eye, Copy, QrCode, ToggleLeft, ToggleRight } from "lucide-react";
+import { Plus, Trash2, RefreshCw, Eye, Copy, QrCode, ToggleLeft, ToggleRight, X } from "lucide-react";
+import { QRCodeCanvas } from "qrcode.react";
 import { API } from "../config";
 
 function formatBytes(gb: number): string {
@@ -24,7 +25,10 @@ export function Users() {
   const limitRef = useRef<HTMLInputElement>(null);
   const dateRef = useRef<HTMLInputElement>(null);
 
+  const [qrModal, setQrModal] = useState<{isOpen: boolean, link: string, username: string} | null>(null);
+
   const fetchUsers = () => fetch(`${API}/clients`).then(r => r.json()).then(setUsers).catch(() => {});
+
   const fetchGroups = () => fetch(`${API}/groups`).then(r => r.json()).then(setGroups).catch(() => {});
   const fetchTemplates = () => fetch(`${API}/templates`).then(r => r.json()).then(setTemplates).catch(() => {});
 
@@ -275,6 +279,13 @@ export function Users() {
                         <Eye className="w-4 h-4" />
                       </button>
                       <button
+                        onClick={() => setQrModal({ isOpen: true, link: user.shadeLink, username: user.username })}
+                        className="p-1.5 hover:bg-primary/20 rounded transition-colors"
+                        title="Показать QR-код"
+                      >
+                        <QrCode className="w-4 h-4" />
+                      </button>
+                      <button
                         onClick={() => copyKey(user.shadeLink)}
                         className="p-1.5 hover:bg-primary/20 rounded transition-colors"
                         title="Скопировать ключ"
@@ -467,6 +478,38 @@ export function Users() {
             </div>
           </div>
         </>
+      )}
+      {/* QR Code Modal */}
+      {qrModal?.isOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-background/80 backdrop-blur-sm">
+          <div className="w-full max-w-sm bg-[#1A1F2E] border border-border rounded-xl shadow-2xl p-6 relative">
+            <button
+              onClick={() => setQrModal(null)}
+              className="absolute top-4 right-4 p-1.5 text-muted-foreground hover:bg-muted hover:text-white rounded-md transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <h3 className="text-xl font-bold mb-6 pr-8">QR-Код для {qrModal.username}</h3>
+            <div className="flex flex-col items-center gap-4 bg-white p-4 rounded-xl">
+              <QRCodeCanvas 
+                value={qrModal.link} 
+                size={256} 
+                level={"H"} 
+                includeMargin={true}
+                className="rounded-lg"
+              />
+            </div>
+            <div className="mt-6 flex justify-center">
+              <button
+                onClick={() => { copyKey(qrModal.link); setQrModal(null); }}
+                className="flex items-center gap-2 bg-primary hover:bg-primary/90 text-white px-4 py-2 rounded-md font-medium transition-colors"
+                title="Скопировать ключ и закрыть"
+              >
+                <Copy className="w-4 h-4" /> Скопировать ключ
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

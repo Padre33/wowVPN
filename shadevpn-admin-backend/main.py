@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import func as sa_func
@@ -126,6 +126,31 @@ app.add_middleware(
     allow_methods=["*"], allow_headers=["*"],
 )
 
+ADMIN_PASSWORD = "admin" # Простой пароль по умолчанию
+
+@app.middleware("http")
+async def verify_admin(request: Request, call_next):
+    if request.url.path.startswith("/api/login") or request.method == "OPTIONS":
+        return await call_next(request)
+    if not request.url.path.startswith("/api"):
+        return await call_next(request)
+        
+    token = request.headers.get("X-Admin-Token")
+    if token != ADMIN_PASSWORD:
+        from starlette.responses import JSONResponse
+        return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
+
+    return await call_next(request)
+
+class LoginRequest(BaseModel):
+    password: str
+
+@app.post("/api/login")
+def login(req: LoginRequest):
+    if req.password == ADMIN_PASSWORD:
+        return {"status": "ok"}
+    from fastapi import HTTPException
+    raise HTTPException(status_code=401, detail="Wrong password")
 
 def get_db():
     db = SessionLocal()
@@ -134,11 +159,9 @@ def get_db():
     finally:
         db.close()
 
-
 def get_setting(db: Session, key: str, default: str = "") -> str:
     row = db.query(SettingsDB).filter_by(key=key).first()
     return row.value if row else default
-
 
 # ═══════════════════  Pydantic  ═══════════════════
 
