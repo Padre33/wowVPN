@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Plus, Trash2, RefreshCw, Eye, Copy, QrCode, ToggleLeft, ToggleRight, X } from "lucide-react";
-import { QRCodeCanvas } from "qrcode.react";
+import { QRCodeSVG } from "qrcode.react";
 import { API } from "../config";
 
 function formatBytes(gb: number): string {
@@ -506,10 +506,10 @@ export function Users() {
             </button>
             <h3 className="text-xl font-bold mb-6 pr-8">QR-Код для {qrModal.username}</h3>
             <div className="flex flex-col items-center gap-4 bg-white p-4 rounded-xl">
-              <QRCodeCanvas 
+              <QRCodeSVG 
                 value={qrModal.link} 
-                size={256} 
-                level={"H"} 
+                size={280} 
+                level={"M"} 
                 includeMargin={true}
                 className="rounded-lg"
               />
