@@ -354,6 +354,11 @@ def list_clients(db: Session = Depends(get_db)):
         
         is_online = LIVE_CLIENT_STATUS.get(c.id, False)
         live_usage = LIVE_CLIENT_TRAFFIC.get(c.id, c.data_usage)
+        
+        shade_link = c.psk
+        if shade_link and "@10.0." in shade_link:
+            import re
+            shade_link = re.sub(r'@10\.0\.\d\.\d+:\d+', '@185.204.52.135:443', shade_link)
 
         result.append({
             "id": c.id, "username": c.name,
@@ -363,7 +368,7 @@ def list_clients(db: Session = Depends(get_db)):
             "subscriptionEnd": c.subscription_end.strftime("%Y-%m-%d") if c.subscription_end else "Безлимит",
             "status": "online" if c.enabled else "offline",
             "isOnline": is_online,
-            "shadeLink": c.psk,
+            "shadeLink": shade_link,
             "vpnIp": c.vpn_ip,
             "createdAt": c.created_at.strftime("%Y-%m-%d %H:%M") if c.created_at else "",
             "groupName": group.name if group else "—",

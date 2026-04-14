@@ -131,8 +131,23 @@ export function Users() {
 
   // ─── Копировать ключ ───
   const copyKey = (shadeLink: string) => {
-    navigator.clipboard.writeText(shadeLink);
-    alert("✅ Ключ shade:// скопирован в буфер обмена!");
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(shadeLink);
+      alert("✅ Ключ shade:// скопирован в буфер обмена!");
+    } else {
+      const textArea = document.createElement("textarea");
+      textArea.value = shadeLink;
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      try {
+        document.execCommand('copy');
+        alert("✅ Ключ shade:// скопирован в буфер обмена (fallback грязным хаком)!");
+      } catch (err) {
+        alert("Не удалось скопировать ключ. Пожалуйста, выделите его вручную.");
+      }
+      document.body.removeChild(textArea);
+    }
   };
 
   return (
