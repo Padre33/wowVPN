@@ -46,7 +46,6 @@ def parse_bytes(s):
 
 async def traffic_collector():
     """Каждые 10 секунд читает live статистику из ОЗУ ядра и копит трафик"""
-    first_run = True
     while True:
         try:
             cmd = ["/opt/shadevpn/target/release/aivpn-server", "--list-clients", "--clients-db", "/etc/shadevpn/clients.json"]
@@ -76,13 +75,7 @@ async def traffic_collector():
                     bi = parse_bytes(download_str)
                     bo = parse_bytes(upload_str)
 
-                    # Если это первый запуск коллектора - просто запоминаем стартовые значения.
-                    if first_run:
-                        LAST_TRAFFIC_STATE[cid] = {"in": bi, "out": bo}
-                        LIVE_CLIENT_STATUS[cid] = is_online
-                        continue
-
-                    # Дельта-трекинг
+                    # Дельта-трекинг: если клиент видится впервые, стартовая точка = текущие значения (delta=0)
                     prev = LAST_TRAFFIC_STATE.get(cid, {"in": bi, "out": bo})
                     delta_in = bi - prev["in"]
                     delta_out = bo - prev["out"]
@@ -92,7 +85,7 @@ async def traffic_collector():
 
                     LIVE_CLIENT_STATUS[cid] = is_online
                     
-                    # Если счетчик меньше предыдущего (сессия перезапустилась ядром)
+                    # Если счетчик меньше предыдущего (VPN ядро перезапустилось)
                     if delta_in < 0: delta_in = bi
                     if delta_out < 0: delta_out = bo
                     
@@ -114,7 +107,6 @@ async def traffic_collector():
                             db.add(snap)
             db.commit()
             db.close()
-            first_run = False
         except Exception as e:
             logging.error(f"Live collector warn: {e}")
             
