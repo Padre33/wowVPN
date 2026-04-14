@@ -324,7 +324,7 @@ def list_clients(db: Session = Depends(get_db)):
             "id": c.id, "username": c.name,
             "telegramId": c.telegram_id or "—",
             "protocol": c.protocol,
-            "dataUsage": round(live_usage, 2), "dataLimit": c.data_limit,
+            "dataUsage": round(live_usage, 6), "dataLimit": c.data_limit,
             "subscriptionEnd": c.subscription_end.strftime("%Y-%m-%d") if c.subscription_end else "Безлимит",
             "status": "online" if c.enabled else "offline",
             "isOnline": is_online,

@@ -2,6 +2,13 @@ import { useState, useEffect, useRef } from "react";
 import { Plus, Trash2, RefreshCw, Eye, Copy, QrCode, ToggleLeft, ToggleRight } from "lucide-react";
 import { API } from "../config";
 
+function formatBytes(gb: number): string {
+  if (gb >= 1024) return `${(gb / 1024).toFixed(1)} TB`;
+  if (gb >= 1) return `${gb.toFixed(2)} GB`;
+  if (gb > 0) return `${(gb * 1024).toFixed(1)} MB`;
+  return "0 MB";
+}
+
 export function Users() {
   const [users, setUsers] = useState<any[]>([]);
   const [groups, setGroups] = useState<any[]>([]);
@@ -236,7 +243,7 @@ export function Users() {
                     <div className="space-y-1">
                       <div className="flex items-center gap-2 text-sm">
                         <span>
-                          {user.dataUsage} / {user.dataLimit} GB
+                          {formatBytes(user.dataUsage)} / {user.dataLimit >= 999 ? "Безлимит" : `${user.dataLimit} GB`}
                         </span>
                       </div>
                       <div className="w-32 h-1.5 bg-muted rounded-full overflow-hidden">
