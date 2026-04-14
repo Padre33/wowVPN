@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from "react";
-import { Plus, Trash2, RefreshCw, Eye, Copy, QrCode, ToggleLeft, ToggleRight, X } from "lucide-react";
+import { Plus, Trash2, RefreshCw, Eye, Copy, QrCode, ToggleLeft, ToggleRight, X, ArrowLeft } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { API } from "../config";
+import { useSearchParams, useNavigate } from "react-router";
 
 function formatBytes(gb: number): string {
   if (gb >= 1024) return `${(gb / 1024).toFixed(1)} TB`;
@@ -19,6 +20,12 @@ export function Users() {
   const [selectedUser, setSelectedUser] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
   const [selectedGroupId, setSelectedGroupId] = useState("");
+
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const groupFilterId = searchParams.get("group");
+  
+  const displayedUsers = groupFilterId ? users.filter(u => u.groupId === groupFilterId) : users;
 
   const nameRef = useRef<HTMLInputElement>(null);
   const tgRef = useRef<HTMLInputElement>(null);
@@ -48,10 +55,10 @@ export function Users() {
   };
 
   const toggleSelectAll = () => {
-    if (selectedUsers.length === users.length) {
+    if (selectedUsers.length === displayedUsers.length) {
       setSelectedUsers([]);
     } else {
-      setSelectedUsers(users.map((u) => u.id));
+      setSelectedUsers(displayedUsers.map((u) => u.id));
     }
   };
 
@@ -185,11 +192,27 @@ export function Users() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Клиенты</h1>
-          <p className="text-muted-foreground mt-1">
-            Управление клиентами VPN и их подписками
-          </p>
+        <div className="flex items-center gap-4">
+          {groupFilterId && (
+            <button
+              onClick={() => navigate("/groups")}
+              className="p-2 bg-muted hover:bg-primary/20 rounded-lg transition-colors group"
+              title="Назад к группам"
+            >
+              <ArrowLeft className="w-5 h-5 group-hover:-translate-x-0.5 transition-transform" />
+            </button>
+          )}
+          <div>
+            <h1 className="text-3xl font-bold">
+              {groupFilterId 
+                ? `Клиенты (${groups.find(g => g.id === groupFilterId)?.name || "Группа"})` 
+                : "Клиенты"
+              }
+            </h1>
+            <p className="text-muted-foreground mt-1">
+              Управление клиентами VPN и их подписками
+            </p>
+          </div>
         </div>
         <button
           onClick={() => {
@@ -230,7 +253,7 @@ export function Users() {
                 <th className="p-4 text-left">
                   <input
                     type="checkbox"
-                    checked={selectedUsers.length === users.length && users.length > 0}
+                    checked={selectedUsers.length === displayedUsers.length && displayedUsers.length > 0}
                     onChange={toggleSelectAll}
                     className="rounded border-border"
                   />
@@ -247,14 +270,14 @@ export function Users() {
               </tr>
             </thead>
             <tbody>
-              {users.length === 0 && (
+              {displayedUsers.length === 0 && (
                 <tr>
                   <td colSpan={10} className="p-8 text-center text-muted-foreground">
                     Нет клиентов. Нажмите «Добавить клиента» для регистрации.
                   </td>
                 </tr>
               )}
-              {users.map((user) => (
+              {displayedUsers.map((user) => (
                 <tr
                   key={user.id}
                   className="border-b border-border hover:bg-muted/30 transition-colors"
