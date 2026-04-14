@@ -28,6 +28,10 @@ class MainActivity : AppCompatActivity() {
 
     private var isConnected = false
     private var activeKey: String = ""
+    private var lastRefreshTime: Long = 0L
+    companion object {
+        private const val REFRESH_COOLDOWN_MS = 60_000L  // 60 seconds between API refreshes
+    }
 
     // Views
     private lateinit var btnConnect: FrameLayout
@@ -99,28 +103,6 @@ class MainActivity : AppCompatActivity() {
 
         // Server card — show server info
         updateServerCard(active)
-
-        // Background subscription refresh (silent, non-blocking)
-        val subUrl = SecureStorage.loadSubscriptionUrl(this)
-        if (subUrl.isNotEmpty()) {
-            CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    val updatedProfiles = SubscriptionManager.refreshAndSaveProfiles(this@MainActivity)
-                    if (updatedProfiles != null && updatedProfiles.isNotEmpty()) {
-                        withContext(Dispatchers.Main) {
-                            // Reload the active profile after refresh
-                            val newActiveId = SecureStorage.loadActiveProfileId(this@MainActivity)
-                            val newActive = updatedProfiles.find { it.id == newActiveId } ?: updatedProfiles.first()
-                            activeKey = newActive.key
-                            updateServerCard(newActive)
-                            Log.d("MainActivity", "Subscription refreshed: ${updatedProfiles.size} servers")
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e("MainActivity", "Subscription refresh failed: ${e.message}")
-                }
-            }
-        }
 
         // Connect button with haptic feedback
         btnConnect.setOnClickListener {
@@ -206,6 +188,31 @@ class MainActivity : AppCompatActivity() {
         if (active != null && active.key.isNotEmpty()) {
             activeKey = active.key
             updateServerCard(active)
+        }
+
+        // Background subscription refresh (every time app comes to foreground)
+        val now = System.currentTimeMillis()
+        if (now - lastRefreshTime > REFRESH_COOLDOWN_MS) {
+            lastRefreshTime = now
+            val subUrl = SecureStorage.loadSubscriptionUrl(this)
+            if (subUrl.isNotEmpty()) {
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        val updatedProfiles = SubscriptionManager.refreshAndSaveProfiles(this@MainActivity)
+                        if (updatedProfiles != null && updatedProfiles.isNotEmpty()) {
+                            withContext(Dispatchers.Main) {
+                                val newActiveId = SecureStorage.loadActiveProfileId(this@MainActivity)
+                                val newActive = updatedProfiles.find { it.id == newActiveId } ?: updatedProfiles.first()
+                                activeKey = newActive.key
+                                updateServerCard(newActive)
+                                Log.d("MainActivity", "Subscription refreshed: ${updatedProfiles.size} servers")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e("MainActivity", "Subscription refresh failed: ${e.message}")
+                    }
+                }
+            }
         }
 
         ShadeVpnService.statusCallback = { connected, statusText ->
