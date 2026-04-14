@@ -8,6 +8,7 @@ export function Groups() {
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [assignGroupId, setAssignGroupId] = useState<string | null>(null);
+  const [viewGroup, setViewGroup] = useState<any | null>(null);
   const [selectedClients, setSelectedClients] = useState<string[]>([]);
   const nameRef = useRef<HTMLInputElement>(null);
   const descRef = useRef<HTMLInputElement>(null);
@@ -151,39 +152,102 @@ export function Groups() {
       )}
 
       {/* ═══ Карточки групп ═══ */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
         {groups.map((group) => (
-          <div key={group.id} className="p-6 rounded-lg border border-primary/30 bg-gradient-to-br from-card to-card/50 backdrop-blur-sm hover:border-primary/50 transition-colors">
-            <div className="flex items-start justify-between mb-4">
-              <div className="p-3 rounded-lg bg-primary/10"><UsersIcon className="w-6 h-6 text-primary" /></div>
-              <div className="flex gap-1">
+          <div 
+            key={group.id} 
+            onClick={() => setViewGroup(group)}
+            className="p-5 rounded-lg border border-primary/30 bg-gradient-to-br from-card to-card/50 backdrop-blur-sm hover:border-primary cursor-pointer transition-all shadow-sm hover:shadow-md"
+          >
+            <div className="flex items-start justify-between mb-3">
+              <div className="p-2.5 rounded-lg bg-primary/10"><UsersIcon className="w-5 h-5 text-primary" /></div>
+              <div className="flex gap-1" onClick={e => e.stopPropagation()}>
                 <button onClick={() => openAssignPanel(group.id)} className="p-1.5 hover:bg-primary/20 rounded transition-colors" title="Добавить клиентов"><UserPlus className="w-4 h-4" /></button>
                 <button onClick={() => startEdit(group)} className="p-1.5 hover:bg-primary/20 rounded transition-colors" title="Редактировать"><Edit className="w-4 h-4" /></button>
                 <button onClick={() => handleDelete(group.id)} className="p-1.5 hover:bg-destructive/20 text-destructive rounded transition-colors" title="Удалить"><Trash2 className="w-4 h-4" /></button>
               </div>
             </div>
-            <h3 className="text-xl font-bold mb-1">{group.name}</h3>
+            <h3 className="text-lg font-bold mb-1 truncate">{group.name}</h3>
             <p className="text-sm text-muted-foreground mb-4">{group.description || "Без описания"}</p>
 
-            <div className="space-y-2 text-sm">
+            <div className="space-y-1.5 text-xs">
               <div className="flex justify-between"><span className="text-muted-foreground">Участников</span><span className="font-semibold">{group.members}</span></div>
-              <div className="flex justify-between"><span className="text-muted-foreground">Лимит трафика</span><span className="font-semibold">{group.dataLimit}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Лимит</span><span className="font-semibold">{group.dataLimit}</span></div>
             </div>
-
-            {/* Список участников группы */}
-            {groupMembers(group.id).length > 0 && (
-              <div className="mt-4 pt-3 border-t border-border">
-                <p className="text-xs text-muted-foreground mb-2">Участники:</p>
-                <div className="flex flex-wrap gap-1">
-                  {groupMembers(group.id).map(m => (
-                    <span key={m.id} className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-xs">{m.username}</span>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
         ))}
       </div>
+
+      {/* ═══ Боковая панель для просмотра группы ═══ */}
+      {viewGroup && (
+        <>
+          <div 
+            className="fixed inset-0 bg-background/80 backdrop-blur-sm z-40"
+            onClick={() => setViewGroup(null)}
+          />
+          <div className="fixed inset-y-0 right-0 w-[400px] border-l border-border bg-card p-6 shadow-2xl z-50 overflow-y-auto flex flex-col animate-in slide-in-from-right duration-200">
+            <div className="flex items-center justify-between mb-6 border-b border-border pb-4">
+              <h2 className="text-2xl font-bold">Группа «{viewGroup.name}»</h2>
+              <button 
+                onClick={() => setViewGroup(null)}
+                className="p-2 hover:bg-muted rounded-full transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-6 flex-1">
+              <div>
+                <p className="text-sm text-muted-foreground mb-1">Описание</p>
+                <p className="font-medium">{viewGroup.description || "Без описания"}</p>
+              </div>
+              
+              <div>
+                <p className="text-sm text-muted-foreground mb-1">Глобальный лимит группы</p>
+                <p className="font-medium bg-primary/10 inline-block px-2 py-1 rounded text-primary">{viewGroup.dataLimit}</p>
+              </div>
+
+              <div>
+                <h3 className="text-lg font-bold mb-3 flex items-center gap-2">
+                  <UsersIcon className="w-5 h-5 text-primary" />
+                  Участники группы ({groupMembers(viewGroup.id).length})
+                </h3>
+                
+                {groupMembers(viewGroup.id).length === 0 ? (
+                  <p className="text-sm text-muted-foreground italic">В этой группе пока нет участников.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {groupMembers(viewGroup.id).map(c => (
+                      <div key={c.id} className="p-3 bg-muted/40 rounded-lg border border-border flex flex-col gap-1 hover:bg-muted transition-colors">
+                        <div className="flex justify-between items-center">
+                          <span className="font-bold">{c.username}</span>
+                          <span className={`w-2 h-2 rounded-full ${c.isOnline ? 'bg-green-500' : 'bg-red-500'} shadow-[0_0_8px_rgba(34,197,94,0.5)]`} title={c.isOnline ? "В сети" : "Офлайн"} />
+                        </div>
+                        <div className="text-xs text-muted-foreground flex justify-between">
+                          <span>{c.telegramId !== "—" ? c.telegramId : "Без Telegram"}</span>
+                          <span>{c.dataUsage} Трафика</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-8 pt-4 border-t border-border flex gap-3">
+              <button
+                onClick={() => {
+                  setViewGroup(null);
+                  openAssignPanel(viewGroup.id);
+                }}
+                className="flex-1 py-2 bg-primary/10 text-primary hover:bg-primary/20 rounded-lg transition-colors font-medium flex items-center justify-center gap-2"
+              >
+                <UserPlus className="w-4 h-4" /> Добавить клиентов
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
