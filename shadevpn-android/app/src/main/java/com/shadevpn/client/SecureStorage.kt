@@ -156,6 +156,16 @@ object SecureStorage {
             mutableListOf()
         }
     }
+
+    // ──────────── Subscription URL ────────────
+
+    fun saveSubscriptionUrl(context: Context, url: String) {
+        saveString(context, "subscription_url", url)
+    }
+
+    fun loadSubscriptionUrl(context: Context): String {
+        return loadString(context, "subscription_url")
+    }
     // ──────────── Boolean preferences ────────────
 
     fun saveBoolean(context: Context, key: String, value: Boolean) {

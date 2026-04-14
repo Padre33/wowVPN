@@ -13,21 +13,12 @@ import androidx.appcompat.app.AppCompatActivity
 /**
  * Splash screen — shows logo for 2 seconds with fade-in animation,
  * then routes to Onboarding (if no key saved) or MainActivity (if key exists).
+ * Language is already applied by ShadeVpnApp before this Activity starts.
  */
 class SplashActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
-        // Sync language with saved preference
-        val lang = SecureStorage.loadLanguage(this)
-        val currentLocales = androidx.appcompat.app.AppCompatDelegate.getApplicationLocales()
-        if (currentLocales.isEmpty || currentLocales[0]?.language != lang) {
-            androidx.appcompat.app.AppCompatDelegate.setApplicationLocales(
-                androidx.core.os.LocaleListCompat.forLanguageTags(lang)
-            )
-        }
-
         setContentView(R.layout.activity_splash)
 
         // Animate logo: fade in + scale up

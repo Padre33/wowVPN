@@ -1,4 +1,4 @@
-import os
+import os, uuid
 from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, DateTime, Text
 from sqlalchemy.orm import sessionmaker, declarative_base
 from datetime import datetime
@@ -23,6 +23,7 @@ class ClientDB(Base):
     subscription_end = Column(DateTime, nullable=True)
     enabled = Column(Boolean, default=True)
     group_id = Column(String, nullable=True)  # FK to groups
+    sub_token = Column(String, nullable=True, unique=True)  # Subscription token for dynamic server list
 
 
 class GroupDB(Base):
@@ -93,6 +94,18 @@ if "group_id" not in _existing_cols:
     _cur.execute("ALTER TABLE clients ADD COLUMN group_id TEXT")
     _conn.commit()
     print("[MIGRATION] Added 'group_id' column to 'clients' table")
+if "sub_token" not in _existing_cols:
+    _cur.execute("ALTER TABLE clients ADD COLUMN sub_token TEXT")
+    _conn.commit()
+    print("[MIGRATION] Added 'sub_token' column to 'clients' table")
+    # Generate sub_token for existing clients that don't have one
+    _cur.execute("SELECT id FROM clients WHERE sub_token IS NULL")
+    _rows = _cur.fetchall()
+    for _row in _rows:
+        _cur.execute("UPDATE clients SET sub_token=? WHERE id=?", (str(uuid.uuid4()), _row[0]))
+    if _rows:
+        _conn.commit()
+        print(f"[MIGRATION] Generated sub_token for {len(_rows)} existing clients")
 _conn.close()
 
 # Seed defaults

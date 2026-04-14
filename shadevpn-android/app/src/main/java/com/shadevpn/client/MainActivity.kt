@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.view.HapticFeedbackConstants
 import android.os.Looper
+import android.util.Log
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -17,6 +18,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.card.MaterialCardView
 import org.json.JSONObject
+import kotlinx.coroutines.*
 
 /**
  * Main VPN screen — power button, status, stats, server card.
@@ -95,12 +97,29 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // Server card — show server info from key
-        val parsed = parseConnectionKey(activeKey)
-        if (parsed != null) {
-            val host = parsed[0].substringBefore(":")
-            findViewById<TextView>(R.id.textServerName).text = host
-            findViewById<TextView>(R.id.textServerFlag).text = "NL" // Default for now
+        // Server card — show server info
+        updateServerCard(active)
+
+        // Background subscription refresh (silent, non-blocking)
+        val subUrl = SecureStorage.loadSubscriptionUrl(this)
+        if (subUrl.isNotEmpty()) {
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val updatedProfiles = SubscriptionManager.refreshAndSaveProfiles(this@MainActivity)
+                    if (updatedProfiles != null && updatedProfiles.isNotEmpty()) {
+                        withContext(Dispatchers.Main) {
+                            // Reload the active profile after refresh
+                            val newActiveId = SecureStorage.loadActiveProfileId(this@MainActivity)
+                            val newActive = updatedProfiles.find { it.id == newActiveId } ?: updatedProfiles.first()
+                            activeKey = newActive.key
+                            updateServerCard(newActive)
+                            Log.d("MainActivity", "Subscription refreshed: ${updatedProfiles.size} servers")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("MainActivity", "Subscription refresh failed: ${e.message}")
+                }
+            }
         }
 
         // Connect button with haptic feedback
@@ -134,6 +153,40 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private val knownServers = mapOf(
+        "185.204.52.135" to Pair("Нидерланды", "🇳🇱"),
+        // Add more servers here as you buy them
+    )
+
+    private fun updateServerCard(profile: SecureStorage.ConnectionProfile?) {
+        if (profile == null) return
+
+        // Try to extract flag from name (subscription format: "Нидерланды 🇳🇱")
+        val flagMatch = Regex("[\\uD83C][\\uDDE6-\\uDDFF]{2}|[\\uD83C][\\uDDE6-\\uDDFF][\\uD83C][\\uDDE6-\\uDDFF]").find(profile.name)
+        if (flagMatch != null) {
+            val cleanName = profile.name.replace(flagMatch.value, "").trim()
+            findViewById<TextView>(R.id.textServerName).text = cleanName.ifEmpty { profile.name }
+            findViewById<TextView>(R.id.textServerFlag).text = flagMatch.value
+            return
+        }
+
+        // For old profiles: try to extract IP from key and look up known name
+        val parsed = parseConnectionKey(profile.key)
+        if (parsed != null) {
+            val serverIp = parsed[0].substringBefore(":")
+            val known = knownServers[serverIp]
+            if (known != null) {
+                findViewById<TextView>(R.id.textServerName).text = known.first
+                findViewById<TextView>(R.id.textServerFlag).text = known.second
+                return
+            }
+        }
+
+        // Fallback
+        findViewById<TextView>(R.id.textServerName).text = profile.name
+        findViewById<TextView>(R.id.textServerFlag).text = "🌐"
+    }
+
     override fun onNewIntent(intent: android.content.Intent?) {
         super.onNewIntent(intent)
         if (intent?.getBooleanExtra("auto_connect", false) == true) {
@@ -145,6 +198,16 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+
+        // Reload active profile (in case user switched server in ServerListActivity)
+        val profiles = SecureStorage.loadProfiles(this)
+        val activeId = SecureStorage.loadActiveProfileId(this)
+        val active = profiles.find { it.id == activeId } ?: profiles.firstOrNull()
+        if (active != null && active.key.isNotEmpty()) {
+            activeKey = active.key
+            updateServerCard(active)
+        }
+
         ShadeVpnService.statusCallback = { connected, statusText ->
             runOnUiThread {
                 isConnected = connected

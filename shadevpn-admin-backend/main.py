@@ -5,7 +5,7 @@ from sqlalchemy import func as sa_func
 from pydantic import BaseModel
 from typing import Optional
 from contextlib import asynccontextmanager
-import os, json, base64, secrets, asyncio, logging
+import os, json, base64, secrets, asyncio, logging, uuid
 from datetime import datetime, timedelta
 
 
@@ -130,7 +130,7 @@ ADMIN_PASSWORD = "admin" # Простой пароль по умолчанию
 
 @app.middleware("http")
 async def verify_admin(request: Request, call_next):
-    if request.url.path.startswith("/api/login") or request.method == "OPTIONS":
+    if request.url.path.startswith("/api/login") or request.url.path.startswith("/api/sub/") or request.method == "OPTIONS":
         return await call_next(request)
     if not request.url.path.startswith("/api"):
         return await call_next(request)
@@ -417,11 +417,22 @@ def create_client(body: ClientCreate, db: Session = Depends(get_db)):
             c_psk = c.get("psk", "")
             break
             
-    # 4. Save to Panel DB
+    # 4. Generate subscription token
+    sub_token = str(uuid.uuid4())
+    
+    # 5. Build the subscription shade:// key
+    server_ip = "185.204.52.135"
+    sub_url = f"http://{server_ip}:8443/api/sub/{sub_token}"
+    sub_payload = json.dumps({"sub": sub_url}, separators=(',', ':'))
+    sub_b64 = base64.urlsafe_b64encode(sub_payload.encode()).rstrip(b'=').decode()
+    sub_shade_link = f"shade://{sub_b64}"
+    
+    # 6. Save to Panel DB
     new = ClientDB(
         id=c_id, name=body.username, psk=link, vpn_ip=c_vpn_ip,
         data_limit=body.data_limit, group_id=body.group_id,
-        telegram_id=body.telegram_id, protocol="ShadeVPN"
+        telegram_id=body.telegram_id, protocol="ShadeVPN",
+        sub_token=sub_token
     )
     if body.subscription_days:
         new.subscription_end = datetime.utcnow() + timedelta(days=body.subscription_days)
@@ -429,10 +440,10 @@ def create_client(body: ClientCreate, db: Session = Depends(get_db)):
     db.add(new)
     db.commit()
     
-    # 5. Restart Core to hot-reload
+    # 7. Restart Core to hot-reload
     os.system("systemctl restart shadevpn")
     
-    return {"status": "created", "shadeLink": link}
+    return {"status": "created", "shadeLink": sub_shade_link, "directLink": link, "subToken": sub_token}
 
 
 @app.delete("/api/clients/{cid}")
@@ -637,6 +648,108 @@ def delete_node(nid: str, db: Session = Depends(get_db)):
     if not n: raise HTTPException(404)
     db.delete(n); db.commit()
     return {"status": "deleted"}
+
+
+# ═══════════════════  Subscription API (Public)  ═══════════════════
+
+COUNTRY_FLAGS = {
+    "NL": "🇳🇱", "NLD": "🇳🇱", "Netherlands": "🇳🇱", "Нидерланды": "🇳🇱",
+    "TR": "🇹🇷", "TUR": "🇹🇷", "Turkey": "🇹🇷", "Турция": "🇹🇷",
+    "DE": "🇩🇪", "DEU": "🇩🇪", "Germany": "🇩🇪", "Германия": "🇩🇪",
+    "US": "🇺🇸", "USA": "🇺🇸", "United States": "🇺🇸", "США": "🇺🇸",
+    "RU": "🇷🇺", "RUS": "🇷🇺", "Russia": "🇷🇺", "Россия": "🇷🇺",
+    "GB": "🇬🇧", "GBR": "🇬🇧", "UK": "🇬🇧", "Великобритания": "🇬🇧",
+    "FR": "🇫🇷", "FRA": "🇫🇷", "France": "🇫🇷", "Франция": "🇫🇷",
+    "JP": "🇯🇵", "JPN": "🇯🇵", "Japan": "🇯🇵", "Япония": "🇯🇵",
+    "ES": "🇪🇸", "ESP": "🇪🇸", "Spain": "🇪🇸", "Испания": "🇪🇸",
+    "FI": "🇫🇮", "FIN": "🇫🇮", "Finland": "🇫🇮", "Финляндия": "🇫🇮",
+    "SE": "🇸🇪", "SWE": "🇸🇪", "Sweden": "🇸🇪", "Швеция": "🇸🇪",
+    "CA": "🇨🇦", "CAN": "🇨🇦", "Canada": "🇨🇦", "Канада": "🇨🇦",
+    "SG": "🇸🇬", "SGP": "🇸🇬", "Singapore": "🇸🇬", "Сингапур": "🇸🇬",
+    "IN": "🇮🇳", "IND": "🇮🇳", "India": "🇮🇳", "Индия": "🇮🇳",
+}
+
+def get_flag(location: str) -> str:
+    """Get country flag emoji from location string"""
+    for key, flag in COUNTRY_FLAGS.items():
+        if key.lower() in location.lower():
+            return flag
+    return "🌐"
+
+def get_country_code(location: str) -> str:
+    """Extract 2-letter country code from location"""
+    code_map = {
+        "Netherlands": "NL", "Нидерланды": "NL", "NL": "NL",
+        "Turkey": "TR", "Турция": "TR", "TR": "TR",
+        "Germany": "DE", "Германия": "DE", "DE": "DE",
+        "Russia": "RU", "Россия": "RU", "RU": "RU",
+        "United States": "US", "США": "US", "US": "US",
+        "France": "FR", "Франция": "FR", "FR": "FR",
+        "UK": "GB", "Великобритания": "GB", "GB": "GB",
+        "Japan": "JP", "Япония": "JP", "JP": "JP",
+        "Spain": "ES", "Испания": "ES", "ES": "ES",
+        "Finland": "FI", "Финляндия": "FI", "FI": "FI",
+        "Sweden": "SE", "Швеция": "SE", "SE": "SE",
+        "Canada": "CA", "Канада": "CA", "CA": "CA",
+        "Singapore": "SG", "Сингапур": "SG", "SG": "SG",
+        "India": "IN", "Индия": "IN", "IN": "IN",
+    }
+    for key, code in code_map.items():
+        if key.lower() in location.lower():
+            return code
+    return "XX"
+
+
+@app.get("/api/sub/{sub_token}")
+def get_subscription(sub_token: str, db: Session = Depends(get_db)):
+    """Публичный эндпоинт для мобильных приложений — возвращает список серверов для клиента"""
+    client = db.query(ClientDB).filter_by(sub_token=sub_token).first()
+    if not client:
+        raise HTTPException(404, "Subscription not found")
+    
+    if not client.enabled:
+        return {"status": "disabled", "servers": [], "message": "Подписка отключена"}
+    
+    if client.subscription_end and client.subscription_end < datetime.utcnow():
+        return {"status": "expired", "servers": [], "message": "Подписка истекла"}
+    
+    # Build server list from nodes
+    nodes = db.query(NodeDB).filter_by(is_online=True).all()
+    servers = []
+    
+    # Always include the primary server (from the client's existing key)
+    if client.psk and client.psk.startswith("shade://"):
+        servers.append({
+            "id": "primary",
+            "name": "Нидерланды 🇳🇱",
+            "country": "NL",
+            "flag": "🇳🇱",
+            "key": client.psk
+        })
+    
+    # Add any additional nodes from the nodes table
+    for node in nodes:
+        # Skip if it's the primary server (to avoid duplicates)
+        if node.ip_address == "185.204.52.135":
+            continue
+        flag = get_flag(node.location or node.name)
+        country = get_country_code(node.location or node.name)
+        servers.append({
+            "id": node.id,
+            "name": f"{node.name} {flag}",
+            "country": country,
+            "flag": flag,
+            "key": ""  # Placeholder — keys will be generated when real servers are deployed
+        })
+    
+    return {
+        "status": "active",
+        "username": client.name,
+        "expires": client.subscription_end.strftime("%Y-%m-%d") if client.subscription_end else "unlimited",
+        "dataUsage": round(client.data_usage, 2),
+        "dataLimit": client.data_limit,
+        "servers": servers
+    }
 
 
 # ═══════════════════  Rules  ═══════════════════
