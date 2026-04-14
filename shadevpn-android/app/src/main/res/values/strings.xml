@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ShadeVPN</string>
+    <string name="subtitle">Your Privacy Shield</string>
+
+    <!-- Splash -->
+    <string name="powered_by">Powered by ShadeVPN</string>
+
+    <!-- Onboarding -->
+    <string name="welcome_title">Welcome</string>
+    <string name="welcome_subtitle">Enter your connection key or scan a QR code</string>
+    <string name="hint_connection_key">Connection key</string>
+    <string name="hint_connection_key_example">shade://eyJ...</string>
+    <string name="btn_paste">Paste</string>
+    <string name="btn_activate_key">Activate key</string>
+    <string name="divider_or">or</string>
+    <string name="btn_scan_qr">Scan QR with camera</string>
+    <string name="btn_load_qr">Load QR from gallery</string>
+    <string name="no_key_hint">No key?</string>
+    <string name="get_key_link">Get a key</string>
+
+    <!-- Home -->
+    <string name="status_disconnected">Tap to connect</string>
+    <string name="status_connecting">Connecting...</string>
+    <string name="status_connected">Protected ✓</string>
+    <string name="status_reconnecting">Reconnecting...</string>
+    <string name="status_error">Error: %s</string>
+    <string name="btn_connect">Connect</string>
+    <string name="btn_disconnect">Disconnect</string>
+    <string name="label_upload">Upload</string>
+    <string name="label_download">Download</string>
+    <string name="label_duration">Duration</string>
+
+    <!-- Server card -->
+    <string name="current_server">Current server</string>
+    <string name="select_server">Select server</string>
+    <string name="fast_connect">Fast connect</string>
+    <string name="fast_connect_desc">Automatically choose best server</string>
+    <string name="server_search_hint">Search by country...</string>
+
+    <!-- Errors -->
+    <string name="error_fill_fields">Enter a connection key</string>
+    <string name="error_invalid_connection_key">Invalid connection key</string>
+    <string name="error_vpn_denied">VPN permission denied</string>
+    <string name="error_invalid_key">Invalid key (need 32 bytes)</string>
+    <string name="error_invalid_qr">No valid key found in QR code</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="section_connection">Connection</string>
+    <string name="section_interface">Interface</string>
+    <string name="section_account">Account</string>
+    <string name="section_support">Support</string>
+    <string name="kill_switch">Kill Switch</string>
+    <string name="kill_switch_desc">Block internet if VPN drops</string>
+    <string name="netshield">NetShield</string>
+    <string name="netshield_desc">Block ads and trackers</string>
+    <string name="label_language">Language</string>
+    <string name="change_key">Change key</string>
+    <string name="current_key">Current key</string>
+    <string name="invite_friend">Invite a friend</string>
+    <string name="feedback">Help us improve</string>
+    <string name="feedback_title">Your feedback</string>
+    <string name="feedback_hint">Tell us what can be improved...</string>
+    <string name="feedback_send">Send</string>
+    <string name="feedback_thanks">Thank you! We will definitely read it.</string>
+    <string name="about">About</string>
+
+    <!-- Split tunneling -->
+    <string name="btn_split_tunnel">Split Tunneling</string>
+    <string name="split_tunnel_title">Split Tunneling</string>
+    <string name="split_tunnel_none">All traffic through VPN</string>
+    <string name="split_tunnel_search">Search...</string>
+    <string name="split_tunnel_vpn_count">%d through VPN</string>
+    <string name="split_tunnel_bypass_count">%d bypass VPN</string>
+    <string name="split_tunnel_hint_apps">%d apps</string>
+    <string name="split_tunnel_hint_sites">%d sites</string>
+    <string name="split_tunnel_hint_combined">%1$s through VPN, %2$s bypass</string>
+    <string name="split_tunnel_system">Hide system</string>
+    <string name="split_tunnel_all">All</string>
+    <string name="split_tunnel_tab_apps">Apps</string>
+    <string name="split_tunnel_tab_sites">Sites</string>
+    <string name="split_tunnel_add_domain">Enter domain...</string>
+    <string name="split_tunnel_domain_hint">Traffic to these domains will bypass VPN</string>
+    <string name="split_tunnel_domain_invalid">Invalid domain format</string>
+    <string name="split_tunnel_domain_exists">Domain already added</string>
+
+    <!-- Profiles -->
+    <string name="label_profiles">Saved keys</string>
+    <string name="btn_add_key">+ Add</string>
+    <string name="dialog_add_profile">Add key</string>
+    <string name="dialog_edit_profile">Edit key</string>
+    <string name="hint_profile_name">Name (e.g. Server 1)</string>
+    <string name="hint_profile_key">Connection key (shade://...)</string>
+    <string name="btn_save">Save</string>
+    <string name="btn_cancel">Cancel</string>
+    <string name="btn_delete">Delete</string>
+    <string name="btn_edit">Edit</string>
+    <string name="error_profile_name_empty">Enter a name</string>
+    <string name="error_profile_key_empty">Enter a connection key</string>
+    <string name="error_profile_key_invalid">Invalid key format</string>
+    <string name="confirm_delete_profile">Delete \"%s\"?</string>
+    <string name="no_profiles">No saved keys. Tap + Add.</string>
+
+    <!-- Footer -->
+    <string name="version_footer">v1.0.0 · ShadeVPN</string>
+    <string name="notification_channel">ShadeVPN Tunnel</string>
+    <string name="notification_channel_desc">Active VPN tunnel status</string>
+    <string name="notification_connecting">Connecting...</string>
+    <string name="notification_connected">Connected to %s</string>
+
+    <!-- Change key dialog -->
+    <string name="change_key_confirm">This will remove your current key and return to setup screen.</string>
+    <string name="btn_ok">OK</string>
+</resources>

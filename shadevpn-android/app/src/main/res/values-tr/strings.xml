@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ShadeVPN</string>
+    <string name="subtitle">Gizlilik kalkanınız</string>
+    <string name="powered_by">Powered by ShadeVPN</string>
+
+    <string name="welcome_title">Hoş geldiniz</string>
+    <string name="welcome_subtitle">Bağlantı anahtarınızı girin veya QR kodunu tarayın</string>
+    <string name="hint_connection_key">Bağlantı anahtarı</string>
+    <string name="btn_paste">Yapıştır</string>
+    <string name="btn_activate_key">Anahtarı etkinleştir</string>
+    <string name="divider_or">veya</string>
+    <string name="btn_scan_qr">Kamera ile QR tara</string>
+    <string name="btn_load_qr">Galeriden QR yükle</string>
+    <string name="no_key_hint">Anahtarınız yok mu?</string>
+    <string name="get_key_link">Anahtar al</string>
+
+    <string name="status_disconnected">Bağlanmak için dokunun</string>
+    <string name="status_connecting">Bağlanıyor...</string>
+    <string name="status_connected">Korunuyor ✓</string>
+    <string name="btn_connect">Bağlan</string>
+    <string name="btn_disconnect">Bağlantıyı kes</string>
+    <string name="label_upload">Yükleme</string>
+    <string name="label_download">İndirme</string>
+    <string name="label_duration">Süre</string>
+
+    <string name="error_fill_fields">Bağlantı anahtarı girin</string>
+    <string name="error_invalid_connection_key">Geçersiz anahtar formatı</string>
+    <string name="error_vpn_denied">VPN izni reddedildi</string>
+
+    <string name="settings_title">Ayarlar</string>
+    <string name="section_connection">Bağlantı</string>
+    <string name="section_interface">Arayüz</string>
+    <string name="section_account">Hesap</string>
+    <string name="section_support">Destek</string>
+    <string name="kill_switch">Kill Switch</string>
+    <string name="kill_switch_desc">VPN kesildiğinde interneti engelle</string>
+    <string name="netshield">NetShield</string>
+    <string name="netshield_desc">Reklam ve izleyici engelleme</string>
+    <string name="label_language">Dil</string>
+    <string name="change_key">Anahtarı değiştir</string>
+    <string name="invite_friend">Arkadaşını davet et</string>
+    <string name="feedback">Daha iyi olmamıza yardım edin</string>
+    <string name="feedback_title">Geri bildiriminiz</string>
+    <string name="feedback_hint">Neyin iyileştirilebileceğini bize söyleyin...</string>
+    <string name="feedback_send">Gönder</string>
+    <string name="feedback_thanks">Teşekkürler! Mutlaka okuyacağız.</string>
+    <string name="about">Hakkında</string>
+    <string name="btn_split_tunnel">Bölünmüş tünel</string>
+    <string name="split_tunnel_none">Tüm trafik VPN üzerinden</string>
+    <string name="btn_cancel">İptal</string>
+    <string name="btn_ok">Tamam</string>
+    <string name="change_key_confirm">Mevcut anahtar silinecek ve ayar ekranına döneceksiniz.</string>
+    <string name="version_footer">v1.0.0 · ShadeVPN</string>
+</resources>

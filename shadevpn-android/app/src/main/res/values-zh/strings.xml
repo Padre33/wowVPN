@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ShadeVPN</string>
+    <string name="subtitle">您的隐私盾牌</string>
+    <string name="powered_by">Powered by ShadeVPN</string>
+
+    <string name="welcome_title">欢迎使用</string>
+    <string name="welcome_subtitle">输入您的连接密钥或扫描二维码</string>
+    <string name="hint_connection_key">连接密钥</string>
+    <string name="btn_paste">粘贴</string>
+    <string name="btn_activate_key">激活密钥</string>
+    <string name="divider_or">或</string>
+    <string name="btn_scan_qr">使用相机扫描二维码</string>
+    <string name="btn_load_qr">从相册加载二维码</string>
+    <string name="no_key_hint">没有密钥？</string>
+    <string name="get_key_link">获取密钥</string>
+
+    <string name="status_disconnected">点击连接</string>
+    <string name="status_connecting">连接中...</string>
+    <string name="status_connected">已保护 ✓</string>
+    <string name="btn_connect">连接</string>
+    <string name="btn_disconnect">断开连接</string>
+    <string name="label_upload">上传</string>
+    <string name="label_download">下载</string>
+    <string name="label_duration">持续时间</string>
+
+    <string name="error_fill_fields">请输入连接密钥</string>
+    <string name="error_invalid_connection_key">无效的密钥格式</string>
+    <string name="error_vpn_denied">VPN权限被拒绝</string>
+
+    <string name="settings_title">设置</string>
+    <string name="section_connection">连接</string>
+    <string name="section_interface">界面</string>
+    <string name="section_account">账户</string>
+    <string name="section_support">支持</string>
+    <string name="kill_switch">安全断网 (Kill Switch)</string>
+    <string name="kill_switch_desc">VPN断开时阻止互联网连接</string>
+    <string name="netshield">NetShield</string>
+    <string name="netshield_desc">广告和追踪器拦截</string>
+    <string name="label_language">语言</string>
+    <string name="change_key">更改密钥</string>
+    <string name="invite_friend">邀请好友</string>
+    <string name="feedback">帮助我们改进</string>
+    <string name="feedback_title">您的反馈</string>
+    <string name="feedback_hint">告诉我们可以改进的地方...</string>
+    <string name="feedback_send">发送</string>
+    <string name="feedback_thanks">谢谢！我们一定会阅读的。</string>
+    <string name="about">关于</string>
+    <string name="btn_split_tunnel">应用分流</string>
+    <string name="split_tunnel_none">所有流量通过VPN</string>
+    <string name="btn_cancel">取消</string>
+    <string name="btn_ok">确定</string>
+    <string name="change_key_confirm">当前密钥将被删除，您将返回设置屏幕。</string>
+    <string name="version_footer">v1.0.0 · ShadeVPN</string>
+
+    <string name="select_server">选择服务器</string>
+</resources>

@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ShadeVPN</string>
+    <string name="subtitle">Ваш щит конфиденциальности</string>
+    <string name="powered_by">Powered by ShadeVPN</string>
+
+    <!-- Onboarding -->
+    <string name="welcome_title">Добро пожаловать</string>
+    <string name="welcome_subtitle">Введите ваш ключ подключения или отсканируйте QR-код</string>
+    <string name="hint_connection_key">Ключ подключения</string>
+    <string name="hint_connection_key_example">shade://eyJ...</string>
+    <string name="btn_paste">Вставить</string>
+    <string name="btn_activate_key">Активировать ключ</string>
+    <string name="divider_or">или</string>
+    <string name="btn_scan_qr">Сканировать QR камерой</string>
+    <string name="btn_load_qr">Загрузить QR из галереи</string>
+    <string name="no_key_hint">Нет ключа?</string>
+    <string name="get_key_link">Получить ключ</string>
+
+    <!-- Home -->
+    <string name="status_disconnected">Нажмите для подключения</string>
+    <string name="status_connecting">Подключение...</string>
+    <string name="status_connected">Защищено ✓</string>
+    <string name="btn_connect">Подключить</string>
+    <string name="btn_disconnect">Отключить</string>
+    <string name="label_upload">Выгрузка</string>
+    <string name="label_download">Загрузка</string>
+    <string name="label_duration">Время сессии</string>
+
+    <!-- Server -->
+    <string name="current_server">Текущий сервер</string>
+    <string name="select_server">Выберите сервер</string>
+    <string name="fast_connect">Быстрое подключение</string>
+    <string name="fast_connect_desc">Автоматически выбрать лучший сервер</string>
+    <string name="server_search_hint">Поиск по стране...</string>
+
+    <!-- Errors -->
+    <string name="error_fill_fields">Введите ключ подключения</string>
+    <string name="error_invalid_connection_key">Неверный формат ключа</string>
+    <string name="error_vpn_denied">Разрешение VPN отклонено</string>
+    <string name="error_invalid_key">Неверный ключ (нужно 32 байта)</string>
+    <string name="error_invalid_qr">QR-код не содержит валидного ключа</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Настройки</string>
+    <string name="section_connection">Соединение</string>
+    <string name="section_interface">Интерфейс</string>
+    <string name="section_account">Аккаунт</string>
+    <string name="section_support">Поддержка</string>
+    <string name="kill_switch">Kill Switch</string>
+    <string name="kill_switch_desc">Блокировать интернет при обрыве VPN</string>
+    <string name="netshield">NetShield</string>
+    <string name="netshield_desc">Блокировка рекламы и трекеров</string>
+    <string name="label_language">Язык</string>
+    <string name="change_key">Сменить ключ</string>
+    <string name="current_key">Текущий ключ</string>
+    <string name="invite_friend">Пригласить друга</string>
+    <string name="feedback">Помогите нам стать лучше</string>
+    <string name="feedback_title">Ваш отзыв</string>
+    <string name="feedback_hint">Расскажите, что можно улучшить...</string>
+    <string name="feedback_send">Отправить</string>
+    <string name="feedback_thanks">Спасибо! Мы обязательно прочитаем.</string>
+    <string name="about">О приложении</string>
+
+    <!-- Split tunneling -->
+    <string name="btn_split_tunnel">Раздельное туннелирование</string>
+    <string name="split_tunnel_title">Раздельное туннелирование</string>
+    <string name="split_tunnel_none">Весь трафик через VPN</string>
+    <string name="split_tunnel_search">Поиск...</string>
+    <string name="split_tunnel_vpn_count">%d через VPN</string>
+    <string name="split_tunnel_bypass_count">%d в обход VPN</string>
+    <string name="split_tunnel_hint_apps">%d приложений</string>
+    <string name="split_tunnel_hint_sites">%d сайтов</string>
+    <string name="split_tunnel_hint_combined">%1$s через VPN, %2$s в обход</string>
+    <string name="split_tunnel_system">Скрыть системные</string>
+    <string name="split_tunnel_all">Все</string>
+    <string name="split_tunnel_tab_apps">Приложения</string>
+    <string name="split_tunnel_tab_sites">Сайты</string>
+    <string name="split_tunnel_add_domain">Введите домен...</string>
+    <string name="split_tunnel_domain_hint">Трафик на эти домены будет идти в обход VPN</string>
+    <string name="split_tunnel_domain_invalid">Неверный формат домена</string>
+    <string name="split_tunnel_domain_exists">Домен уже добавлен</string>
+
+    <!-- Profiles -->
+    <string name="label_profiles">Сохранённые ключи</string>
+    <string name="btn_add_key">+ Добавить</string>
+    <string name="dialog_add_profile">Добавить ключ</string>
+    <string name="dialog_edit_profile">Редактировать ключ</string>
+    <string name="hint_profile_name">Название (напр. Сервер 1)</string>
+    <string name="hint_profile_key">Ключ подключения (shade://...)</string>
+    <string name="btn_save">Сохранить</string>
+    <string name="btn_cancel">Отмена</string>
+    <string name="btn_delete">Удалить</string>
+    <string name="btn_edit">Изменить</string>
+    <string name="error_profile_name_empty">Введите название</string>
+    <string name="error_profile_key_empty">Введите ключ</string>
+    <string name="error_profile_key_invalid">Неверный формат ключа</string>
+    <string name="confirm_delete_profile">Удалить \"%s\"?</string>
+    <string name="no_profiles">Нет сохранённых ключей. Нажмите + Добавить.</string>
+
+    <!-- Footer -->
+    <string name="version_footer">v1.0.0 · ShadeVPN</string>
+    <string name="notification_channel">ShadeVPN Туннель</string>
+    <string name="notification_channel_desc">Статус активного VPN-соединения</string>
+    <string name="notification_connecting">Подключение...</string>
+    <string name="notification_connected">Подключено к %s</string>
+
+    <!-- Change key -->
+    <string name="change_key_confirm">Текущий ключ будет удалён. Вы вернётесь на экран настройки.</string>
+    <string name="btn_ok">ОК</string>
+</resources>

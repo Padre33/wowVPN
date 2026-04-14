@@ -1,0 +1,49 @@
+STATUS:
+● shadevpn.service - ShadeVPN Server
+     Loaded: loaded (/etc/systemd/system/shadevpn.service; enabled; preset: enabled)
+     Active: active (running) since Mon 2026-04-13 13:18:40 EEST; 2min 40s ago
+   Main PID: 2564386 (aivpn-server)
+      Tasks: 2 (limit: 1087)
+     Memory: 4.5M
+        CPU: 101ms
+     CGroup: /system.slice/shadevpn.service
+             └─2564386 /opt/shadevpn/target/release/aivpn-server --listen 0.0.0.0:443 --key-file /etc/shadevpn/server.key --clients-db /etc/shadevpn/clients.json
+
+Apr 13 13:21:03 vps42100.hosted-by-eurohoster.org aivpn-server[2564386]: 2026-04-13T10:21:03.899186Z  WARN aivpn_server::gateway: Handshake failed for 65a92871 (attempt #31) — tag mismatch for all 2 registered clients
+Apr 13 13:21:08 vps42100.hosted-by-eurohoster.org aivpn-server[2564386]: 2026-04-13T10:21:08.429743Z  INFO aivpn_server::session: Assigned VPN IP 10.0.0.12 to session
+Apr 13 13:21:08 vps42100.hosted-by-eurohoster.org aivpn-server[2564386]: 2026-04-13T10:21:08.430206Z  INFO aivpn_server::session: Assigned VPN IP 10.0.0.14 to session
+Apr 13 13:21:08 vps42100.hosted-by-eurohoster.org aivpn-server[2564386]: 2026-04-13T10:21:08.430343Z  WARN aivpn_server::gateway: Handshake failed for 65a92871 (attempt #32) — tag mismatch for all 2 registered clients
+Apr 13 13:21:13 vps42100.hosted-by-eurohoster.org aivpn-server[2564386]: 2026-04-13T10:21:13.062882Z  INFO aivpn_server::session: Assigned VPN IP 10.0.0.12 to session
+Apr 13 13:21:13 vps42100.hosted-by-eurohoster.org aivpn-server[2564386]: 2026-04-13T10:21:13.063242Z  INFO aivpn_server::session: Assigned VPN IP 10.0.0.14 to session
+Apr 13 13:21:13 vps42100.hosted-by-eurohoster.org aivpn-server[2564386]: 2026-04-13T10:21:13.063410Z  WARN aivpn_server::gateway: Handshake failed for 536e40c0 (attempt #33) — tag mismatch for all 2 registered clients
+Apr 13 13:21:17 vps42100.hosted-by-eurohoster.org aivpn-server[2564386]: 2026-04-13T10:21:17.157026Z  INFO aivpn_server::session: Assigned VPN IP 10.0.0.12 to session
+Apr 13 13:21:17 vps42100.hosted-by-eurohoster.org aivpn-server[2564386]: 2026-04-13T10:21:17.157454Z  INFO aivpn_server::session: Assigned VPN IP 10.0.0.14 to session
+Apr 13 13:21:17 vps42100.hosted-by-eurohoster.org aivpn-server[2564386]: 2026-04-13T10:21:17.157588Z  WARN aivpn_server::gateway: Handshake failed for 40b5cd42 (attempt #34) — tag mismatch for all 2 registered clients
+
+
+LOGS:
+Apr 13 13:20:41 vps42100.hosted-by-eurohoster.org aivpn-server[2564386]: 2026-04-13T10:20:41.134598Z  WARN aivpn_server::gateway: Handshake failed for e5f8ab42 (attempt #26) — tag mismatch for all 2 registered clients
+Apr 13 13:20:45 vps42100.hosted-by-eurohoster.org aivpn-server[2564386]: 2026-04-13T10:20:45.646036Z  INFO aivpn_server::session: Assigned VPN IP 10.0.0.12 to session
+Apr 13 13:20:45 vps42100.hosted-by-eurohoster.org aivpn-server[2564386]: 2026-04-13T10:20:45.646454Z  INFO aivpn_server::session: Assigned VPN IP 10.0.0.14 to session
+Apr 13 13:20:45 vps42100.hosted-by-eurohoster.org aivpn-server[2564386]: 2026-04-13T10:20:45.646603Z  WARN aivpn_server::gateway: Handshake failed for e5f8ab42 (attempt #27) — tag mismatch for all 2 registered clients
+Apr 13 13:20:51 vps42100.hosted-by-eurohoster.org aivpn-server[2564386]: 2026-04-13T10:20:51.696855Z  INFO aivpn_server::session: Assigned VPN IP 10.0.0.12 to session
+Apr 13 13:20:51 vps42100.hosted-by-eurohoster.org aivpn-server[2564386]: 2026-04-13T10:20:51.697340Z  INFO aivpn_server::session: Assigned VPN IP 10.0.0.14 to session
+Apr 13 13:20:51 vps42100.hosted-by-eurohoster.org aivpn-server[2564386]: 2026-04-13T10:20:51.697492Z  WARN aivpn_server::gateway: Handshake failed for 65a92871 (attempt #28) — tag mismatch for all 2 registered clients
+Apr 13 13:20:55 vps42100.hosted-by-eurohoster.org aivpn-server[2564386]: 2026-04-13T10:20:55.722815Z  INFO aivpn_server::session: Assigned VPN IP 10.0.0.12 to session
+Apr 13 13:20:55 vps42100.hosted-by-eurohoster.org aivpn-server[2564386]: 2026-04-13T10:20:55.723224Z  INFO aivpn_server::session: Assigned VPN IP 10.0.0.14 to session
+Apr 13 13:20:55 vps42100.hosted-by-eurohoster.org aivpn-server[2564386]: 2026-04-13T10:20:55.723386Z  WARN aivpn_server::gateway: Handshake failed for 723bc1e1 (attempt #29) — tag mismatch for all 2 registered clients
+Apr 13 13:20:59 vps42100.hosted-by-eurohoster.org aivpn-server[2564386]: 2026-04-13T10:20:59.882693Z  INFO aivpn_server::session: Assigned VPN IP 10.0.0.12 to session
+Apr 13 13:20:59 vps42100.hosted-by-eurohoster.org aivpn-server[2564386]: 2026-04-13T10:20:59.883087Z  INFO aivpn_server::session: Assigned VPN IP 10.0.0.14 to session
+Apr 13 13:20:59 vps42100.hosted-by-eurohoster.org aivpn-server[2564386]: 2026-04-13T10:20:59.883211Z  WARN aivpn_server::gateway: Handshake failed for 65a92871 (attempt #30) — tag mismatch for all 2 registered clients
+Apr 13 13:21:03 vps42100.hosted-by-eurohoster.org aivpn-server[2564386]: 2026-04-13T10:21:03.898695Z  INFO aivpn_server::session: Assigned VPN IP 10.0.0.12 to session
+Apr 13 13:21:03 vps42100.hosted-by-eurohoster.org aivpn-server[2564386]: 2026-04-13T10:21:03.899065Z  INFO aivpn_server::session: Assigned VPN IP 10.0.0.14 to session
+Apr 13 13:21:03 vps42100.hosted-by-eurohoster.org aivpn-server[2564386]: 2026-04-13T10:21:03.899186Z  WARN aivpn_server::gateway: Handshake failed for 65a92871 (attempt #31) — tag mismatch for all 2 registered clients
+Apr 13 13:21:08 vps42100.hosted-by-eurohoster.org aivpn-server[2564386]: 2026-04-13T10:21:08.429743Z  INFO aivpn_server::session: Assigned VPN IP 10.0.0.12 to session
+Apr 13 13:21:08 vps42100.hosted-by-eurohoster.org aivpn-server[2564386]: 2026-04-13T10:21:08.430206Z  INFO aivpn_server::session: Assigned VPN IP 10.0.0.14 to session
+Apr 13 13:21:08 vps42100.hosted-by-eurohoster.org aivpn-server[2564386]: 2026-04-13T10:21:08.430343Z  WARN aivpn_server::gateway: Handshake failed for 65a92871 (attempt #32) — tag mismatch for all 2 registered clients
+Apr 13 13:21:13 vps42100.hosted-by-eurohoster.org aivpn-server[2564386]: 2026-04-13T10:21:13.062882Z  INFO aivpn_server::session: Assigned VPN IP 10.0.0.12 to session
+Apr 13 13:21:13 vps42100.hosted-by-eurohoster.org aivpn-server[2564386]: 2026-04-13T10:21:13.063242Z  INFO aivpn_server::session: Assigned VPN IP 10.0.0.14 to session
+Apr 13 13:21:13 vps42100.hosted-by-eurohoster.org aivpn-server[2564386]: 2026-04-13T10:21:13.063410Z  WARN aivpn_server::gateway: Handshake failed for 536e40c0 (attempt #33) — tag mismatch for all 2 registered clients
+Apr 13 13:21:17 vps42100.hosted-by-eurohoster.org aivpn-server[2564386]: 2026-04-13T10:21:17.157026Z  INFO aivpn_server::session: Assigned VPN IP 10.0.0.12 to session
+Apr 13 13:21:17 vps42100.hosted-by-eurohoster.org aivpn-server[2564386]: 2026-04-13T10:21:17.157454Z  INFO aivpn_server::session: Assigned VPN IP 10.0.0.14 to session
+Apr 13 13:21:17 vps42100.hosted-by-eurohoster.org aivpn-server[2564386]: 2026-04-13T10:21:17.157588Z  WARN aivpn_server::gateway: Handshake failed for 40b5cd42 (attempt #34) — tag mismatch for all 2 registered clients

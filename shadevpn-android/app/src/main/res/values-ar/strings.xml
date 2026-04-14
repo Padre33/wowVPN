@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ShadeVPN</string>
+    <string name="subtitle">درع الخصوصية الخاص بك</string>
+    <string name="powered_by">Powered by ShadeVPN</string>
+
+    <string name="welcome_title">مرحباً بك</string>
+    <string name="welcome_subtitle">أدخل مفتاح الاتصال الخاص بك أو امسح رمز QR</string>
+    <string name="hint_connection_key">مفتاح الاتصال</string>
+    <string name="btn_paste">لصق</string>
+    <string name="btn_activate_key">تفعيل المفتاح</string>
+    <string name="divider_or">أو</string>
+    <string name="btn_scan_qr">مسح QR بالكاميرا</string>
+    <string name="btn_load_qr">تحميل QR من المعرض</string>
+    <string name="no_key_hint">لا يوجد مفتاح؟</string>
+    <string name="get_key_link">احصل على مفتاح</string>
+
+    <string name="status_disconnected">اضغط للاتصال</string>
+    <string name="status_connecting">جارٍ الاتصال...</string>
+    <string name="status_connected">محمي ✓</string>
+    <string name="btn_connect">اتصال</string>
+    <string name="btn_disconnect">قطع الاتصال</string>
+    <string name="label_upload">رفع</string>
+    <string name="label_download">تنزيل</string>
+    <string name="label_duration">المدة</string>
+
+    <string name="error_fill_fields">الرجاء إدخال مفتاح الاتصال</string>
+    <string name="error_invalid_connection_key">تنسيق المفتاح غير صالح</string>
+    <string name="error_vpn_denied">تم رفض إذن VPN</string>
+
+    <string name="settings_title">الإعدادات</string>
+    <string name="section_connection">الاتصال</string>
+    <string name="section_interface">الواجهة</string>
+    <string name="section_account">الحساب</string>
+    <string name="section_support">الدعم</string>
+    <string name="kill_switch">مفتاح القفل (Kill Switch)</string>
+    <string name="kill_switch_desc">حظر الإنترنت عند انقطاع الـ VPN</string>
+    <string name="netshield">NetShield</string>
+    <string name="netshield_desc">حظر الإعلانات والمتتبعات</string>
+    <string name="label_language">اللغة</string>
+    <string name="change_key">تغيير المفتاح</string>
+    <string name="invite_friend">دعوة صديق</string>
+    <string name="feedback">ساعدنا على التحسن</string>
+    <string name="feedback_title">رأيك يهمنا</string>
+    <string name="feedback_hint">أخبرنا بما يمكننا تحسينه...</string>
+    <string name="feedback_send">إرسال</string>
+    <string name="feedback_thanks">شكراً! سنقوم بقراءتها بالتأكيد.</string>
+    <string name="about">حول التطبيق</string>
+    <string name="btn_split_tunnel">الانقسام النفقي</string>
+    <string name="split_tunnel_none">كل حركة المرور عبر VPN</string>
+    <string name="btn_cancel">إلغاء</string>
+    <string name="btn_ok">موافق</string>
+    <string name="change_key_confirm">سيتم حذف المفتاح الحالي وستعود إلى شاشة الإعداد.</string>
+    <string name="version_footer">v1.0.0 · ShadeVPN</string>
+    
+    <string name="select_server">اختر خادم</string>
+</resources>

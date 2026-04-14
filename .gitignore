@@ -58,6 +58,25 @@ aivpn-android/**/bin/
 aivpn-android/.gradle/
 aivpn-android/**/local.properties
 aivpn-android/**/.cxx/
+
+shadevpn-android/**/build/
+shadevpn-android/**/bin/
+shadevpn-android/.gradle/
+shadevpn-android/**/local.properties
+shadevpn-android/**/.cxx/
+shadevpn-android/**/captures/
+
+# Node
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Python
+venv/
+__pycache__/
+*.pyc
+shadevpn.db
 aivpn-android/**/captures/
 *.apk
 !releases/*.apk

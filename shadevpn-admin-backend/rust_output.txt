@@ -1,0 +1,8 @@
+Mon Apr 13 05:17:23 PM EEST 2026
+ID                 NAME                 VPN IP       STATUS   UPLOAD       DOWNLOAD     LAST SEEN
+----------------------------------------------------------------------------------------------------
+4523661fe70b2c80   test_user2           10.0.0.12    active   0 B          0 B          never
+bfd74ca458da9d35   padre                10.0.0.15    active   0 B          44.9 MB      2026-04-13 14:13
+efe230c08e3ba89d   Мер тест             10.0.0.16    active   0 B          0 B          never
+
+Total: 3 client(s)
