@@ -509,7 +509,7 @@ export function Users() {
               <QRCodeSVG 
                 value={qrModal.link} 
                 size={280} 
-                level={"M"} 
+                level={"L"} 
                 includeMargin={true}
                 className="rounded-lg"
               />
