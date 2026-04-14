@@ -68,7 +68,6 @@ shadevpn-android/**/captures/
 
 # Node
 node_modules/
-dist/
 dist-ssr/
 *.local
 
