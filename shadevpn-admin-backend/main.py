@@ -172,6 +172,13 @@ class ClientCreate(BaseModel):
     group_id: Optional[str] = None
     subscription_days: Optional[int] = None
 
+class ClientUpdate(BaseModel):
+    username: Optional[str] = None
+    telegram_id: Optional[str] = None
+    data_limit: Optional[float] = None
+    group_id: Optional[str] = None
+    subscription_end: Optional[str] = None
+
 class ClientToggle(BaseModel):
     enabled: bool
 
@@ -432,7 +439,57 @@ def create_client(body: ClientCreate, db: Session = Depends(get_db)):
 def delete_client(cid: str, db: Session = Depends(get_db)):
     c = db.query(ClientDB).filter_by(id=cid).first()
     if not c: raise HTTPException(404, "Клиент не найден")
-    db.delete(c); db.commit()
+    db.delete(c)
+    db.commit()
+    
+    from sync import read_clients_db, write_clients_db
+    core = read_clients_db()
+    core["clients"] = [x for x in core.get("clients", []) if x.get("id") != cid]
+    write_clients_db(core)
+    os.system("systemctl restart shadevpn")
+    return {"status": "deleted"}
+
+@app.patch("/api/clients/{cid}")
+def update_client(cid: str, body: ClientUpdate, db: Session = Depends(get_db)):
+    c = db.query(ClientDB).filter_by(id=cid).first()
+    if not c: raise HTTPException(404, "Клиент не найден")
+    
+    needs_core_restart = False
+    
+    if body.username is not None and body.username != c.name:
+        c.name = body.username
+        
+        # Обновляем имя в clients.json
+        from sync import read_clients_db, write_clients_db
+        core = read_clients_db()
+        for cc in core.get("clients", []):
+            if cc.get("id") == cid:
+                cc["name"] = body.username
+                needs_core_restart = True
+        if needs_core_restart:
+            write_clients_db(core)
+            
+    if body.telegram_id is not None:
+        c.telegram_id = body.telegram_id
+    if body.data_limit is not None:
+        c.data_limit = body.data_limit
+    if body.group_id is not None:
+        c.group_id = body.group_id
+    if body.subscription_end is not None:
+        if body.subscription_end == "":
+            c.subscription_end = None
+        else:
+            try:
+                c.subscription_end = datetime.strptime(body.subscription_end, "%Y-%m-%d")
+            except ValueError:
+                pass
+                
+    db.commit()
+    
+    if needs_core_restart:
+        os.system("systemctl restart shadevpn")
+        
+    return {"status": "updated"}
 
 @app.get("/api/clients/{cid}/qr")
 def get_client_qr(cid: str, db: Session = Depends(get_db)):
@@ -453,12 +510,6 @@ def get_client_qr(cid: str, db: Session = Depends(get_db)):
     img.save(buf, format="PNG")
     buf.seek(0)
     return StreamingResponse(buf, media_type="image/png")
-
-    core = read_clients_db()
-    core["clients"] = [x for x in core.get("clients", []) if x.get("id") != cid]
-    write_clients_db(core)
-    os.system("systemctl restart shadevpn")
-    return {"status": "deleted"}
 
 
 @app.patch("/api/clients/{cid}/toggle")

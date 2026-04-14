@@ -107,6 +107,38 @@ export function Users() {
     }
   };
 
+  // ─── Обновление клиента ───
+  const handleUpdate = async () => {
+    if (!selectedUser) return;
+    setLoading(true);
+    try {
+      const body = {
+        username: nameRef.current?.value || undefined,
+        telegram_id: tgRef.current?.value || undefined,
+        data_limit: limitRef.current?.value ? parseFloat(limitRef.current.value) : undefined,
+        subscription_end: dateRef.current?.value || "",
+        group_id: selectedGroupId || ""
+      };
+      
+      const res = await fetch(`${API}/clients/${selectedUser.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      if (res.ok) {
+        fetchUsers();
+        // optionally show a success toast, or close sidebar
+        alert("✅ Изменения сохранены");
+      } else {
+        alert("Ошибка при сохранении");
+      }
+    } catch (e) {
+      alert("Ошибка при вызове API");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // ─── Удаление одного клиента ───
   const handleDelete = async (clientId: string) => {
     if (!confirm("Удалить этого клиента? Его VPN-ключ будет деактивирован.")) return;
@@ -362,7 +394,6 @@ export function Users() {
                     defaultValue={selectedUser?.username || ""}
                     className="w-full px-3 py-2 bg-input rounded-lg border border-border focus:border-primary outline-none"
                     placeholder="Меружан"
-                    readOnly={!!selectedUser}
                   />
                 </div>
 
@@ -376,16 +407,14 @@ export function Users() {
                     defaultValue={selectedUser?.telegramId || ""}
                     className="w-full px-3 py-2 bg-input rounded-lg border border-border focus:border-primary outline-none"
                     placeholder="@username"
-                    readOnly={!!selectedUser}
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium mb-2">Шаблон тарифа</label>
+                  <label className="block text-sm font-medium mb-2">Шаблон тарифа (Применить и перезаписать лимиты)</label>
                   <select
                     onChange={handleTemplateChange}
                     className="w-full px-3 py-2 bg-input rounded-lg border border-border focus:border-primary outline-none"
-                    disabled={!!selectedUser}
                   >
                     <option value="">Свой тариф</option>
                     {templates.map(t => (
@@ -397,10 +426,9 @@ export function Users() {
                 <div>
                   <label className="block text-sm font-medium mb-2">Группа</label>
                   <select
-                    value={selectedUser?.groupId || selectedGroupId}
+                    value={selectedGroupId}
                     onChange={e => setSelectedGroupId(e.target.value)}
                     className="w-full px-3 py-2 bg-input rounded-lg border border-border focus:border-primary outline-none"
-                    disabled={!!selectedUser}
                   >
                     <option value="">Без группы</option>
                     {groups.map(g => (
@@ -431,7 +459,6 @@ export function Users() {
                     defaultValue={selectedUser?.dataLimit || 100}
                     className="w-full px-3 py-2 bg-input rounded-lg border border-border focus:border-primary outline-none"
                     placeholder="100"
-                    readOnly={!!selectedUser}
                   />
                 </div>
 
@@ -444,7 +471,6 @@ export function Users() {
                     type="date"
                     defaultValue={selectedUser?.subscriptionEnd || ""}
                     className="w-full px-3 py-2 bg-input rounded-lg border border-border focus:border-primary outline-none"
-                    readOnly={!!selectedUser}
                   />
                 </div>
               </div>
@@ -476,12 +502,22 @@ export function Users() {
                     {loading ? "Создание..." : "Создать клиента"}
                   </button>
                 ) : (
-                  <button
-                    onClick={() => handleDelete(selectedUser.id)}
-                    className="flex-1 px-4 py-2 bg-destructive text-destructive-foreground rounded-lg hover:bg-destructive/90 transition-colors"
-                  >
-                    Удалить клиента
-                  </button>
+                  <>
+                    <button
+                      onClick={handleUpdate}
+                      disabled={loading}
+                      className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50"
+                    >
+                      {loading ? "..." : "💾 Сохранить изменения"}
+                    </button>
+                    <button
+                      onClick={() => handleDelete(selectedUser.id)}
+                      className="px-4 py-2 bg-destructive/10 text-destructive rounded-lg hover:bg-destructive hover:text-white transition-colors"
+                      title="Удалить клиента"
+                    >
+                      🗑️
+                    </button>
+                  </>
                 )}
                 <button
                   onClick={() => setSidebarOpen(false)}
