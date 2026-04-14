@@ -18,15 +18,25 @@ export function Home() {
   const [chartData, setChartData] = useState<any[]>([]);
 
   useEffect(() => {
-    fetch(`${API}/dashboard`).then(r => r.json()).then(setDash).catch(() => {});
-    fetch(`${API}/system`).then(r => r.json()).then(setSys).catch(() => {});
-    fetch(`${API}/clients`).then(r => r.json()).then(setClients).catch(() => {});
-    fetch(`${API}/traffic/summary`).then(r => r.json()).then(setTrafficSummary).catch(() => {});
-    fetch(`${API}/traffic/chart24h`).then(r => r.json()).then(setChartData).catch(() => {});
+    const fetchData = () => {
+      fetch(`${API}/dashboard`).then(r => r.json()).then(setDash).catch(() => {});
+      fetch(`${API}/system`).then(r => r.json()).then(setSys).catch(() => {});
+      fetch(`${API}/clients`).then(r => r.json()).then(setClients).catch(() => {});
+      fetch(`${API}/traffic/summary`).then(r => r.json()).then(setTrafficSummary).catch(() => {});
+      fetch(`${API}/traffic/chart24h`).then(r => r.json()).then(setChartData).catch(() => {});
+    };
+    
+    fetchData(); // first load
+    const interval = setInterval(fetchData, 5000);
+    return () => clearInterval(interval);
   }, []);
 
-  const activeCount = dash?.activeClients || 0;
+  const enabledCount = dash?.enabledClients || 0;
   const disabledCount = dash?.disabledClients || 0;
+  const onlineCount = dash?.onlineClients || 0;
+  const offlineCount = dash?.offlineClients || 0;
+  const active24h = dash?.active24h || 0;
+  const inactive24h = dash?.inactive24h || 0;
   const totalCount = dash?.totalClients || 0;
   const downloadGB = dash?.downloadGB || 0;
   const uploadGB = dash?.uploadGB || 0;
@@ -69,19 +79,18 @@ export function Home() {
     { period: "Текущий год", value: formatBytes(ts?.currentYearGB || 0), icon: CalendarCheck, color: "#10B981" },
   ];
 
-  // Круговые диаграммы
   const pieCharts = [
-    { title: "Клиенты", data: [
-      { name: "Активные", value: activeCount, color: "#10B981" },
-      { name: "Заблокированные", value: disabledCount, color: "#334155" },
+    { title: "Статус подписок", data: [
+      { name: "Активные", value: enabledCount, color: "#10B981" },
+      { name: "Отключены", value: disabledCount, color: "#F43F5E" },
     ]},
-    { title: "За сегодня", data: [
-      { name: "Заходили сегодня", value: activeCount, color: "#06B6D4" },
-      { name: "Не заходили", value: Math.max(disabledCount, 0), color: "#334155" },
+    { title: "Текущий онлайн", data: [
+      { name: "В сети", value: onlineCount, color: "#06B6D4" },
+      { name: "Офлайн", value: offlineCount, color: "#334155" },
     ]},
-    { title: "На этой неделе", data: [
-      { name: "Заходили на неделе", value: totalCount, color: "#8B5CF6" },
-      { name: "Никогда не заходили", value: 0, color: "#F43F5E" },
+    { title: "Трафик за 24 часа", data: [
+      { name: "Был трафик", value: active24h, color: "#8B5CF6" },
+      { name: "Не было", value: inactive24h, color: "#475569" },
     ]},
   ];
 
@@ -97,7 +106,7 @@ export function Home() {
         {dash && (
           <div className="mt-3 flex gap-3 text-sm flex-wrap">
             <span className="px-3 py-1 rounded-full bg-primary/20 text-primary font-medium">👥 Клиентов: {totalCount}</span>
-            <span className="px-3 py-1 rounded-full bg-green-500/20 text-green-400 font-medium">✅ Активных: {activeCount}</span>
+            <span className="px-3 py-1 rounded-full bg-green-500/20 text-green-400 font-medium">✅ Активных: {enabledCount}</span>
             <span className="px-3 py-1 rounded-full bg-muted text-muted-foreground font-medium">⬇ {formatBytes(downloadGB)}</span>
             <span className="px-3 py-1 rounded-full bg-muted text-muted-foreground font-medium">⬆ {formatBytes(uploadGB)}</span>
           </div>

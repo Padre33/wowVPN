@@ -28,7 +28,12 @@ export function Users() {
   const fetchGroups = () => fetch(`${API}/groups`).then(r => r.json()).then(setGroups).catch(() => {});
   const fetchTemplates = () => fetch(`${API}/templates`).then(r => r.json()).then(setTemplates).catch(() => {});
 
-  useEffect(() => { fetchUsers(); fetchGroups(); fetchTemplates(); }, []);
+  useEffect(() => { 
+    const fetchData = () => { fetchUsers(); fetchGroups(); fetchTemplates(); };
+    fetchData(); 
+    const interval = setInterval(fetchData, 5000); 
+    return () => clearInterval(interval); 
+  }, []);
 
   const toggleUserSelection = (userId: string) => {
     setSelectedUsers((prev) =>

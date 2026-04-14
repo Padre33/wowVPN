@@ -75,15 +75,18 @@ async def traffic_collector():
                         except Exception as e:
                             logging.error(f"Time parse error: {e}")
                     
-                    LIVE_CLIENT_STATUS[cid] = is_online
-                    
                     bi = parse_bytes(download_str)
                     bo = parse_bytes(upload_str)
-                    
+
                     # Дельта-трекинг
                     prev = LAST_TRAFFIC_STATE.get(cid, {"in": 0.0, "out": 0.0})
                     delta_in = bi - prev["in"]
                     delta_out = bo - prev["out"]
+                    
+                    if (delta_in + delta_out) > 0:
+                        is_online = True
+
+                    LIVE_CLIENT_STATUS[cid] = is_online
                     
                     # Если счетчик меньше предыдущего (сессия перезапустилась)
                     if delta_in < 0: delta_in = bi
@@ -236,16 +239,28 @@ def system_metrics():
 
 @app.get("/api/dashboard")
 def get_dashboard(db: Session = Depends(get_db)):
+    from datetime import datetime, timedelta
     total = db.query(ClientDB).count()
-    active = sum(1 for cid in LIVE_CLIENT_STATUS if LIVE_CLIENT_STATUS[cid])
+    enabled = db.query(ClientDB).filter(ClientDB.enabled == True).count()
+    disabled = total - enabled
+    
+    online = sum(1 for cid in LIVE_CLIENT_STATUS if LIVE_CLIENT_STATUS[cid])
+    offline = total - online
+
+    yesterday = datetime.utcnow() - timedelta(days=1)
+    active_24h = db.query(TrafficSnapshotDB.client_id).filter(TrafficSnapshotDB.timestamp >= yesterday).distinct().count()
 
     ti = sum(snap.bytes_in for snap in db.query(TrafficSnapshotDB).all())
     to = sum(snap.bytes_out for snap in db.query(TrafficSnapshotDB).all())
 
     return {
         "totalClients": total,
-        "activeClients": active,
-        "disabledClients": total - active,
+        "enabledClients": enabled,
+        "disabledClients": disabled,
+        "onlineClients": online,
+        "offlineClients": offline,
+        "active24h": active_24h,
+        "inactive24h": total - active_24h,
         "totalTrafficGB": round((ti + to) / (1024**3), 2),
         "downloadGB": round(ti / (1024**3), 2),
         "uploadGB": round(to / (1024**3), 2),
