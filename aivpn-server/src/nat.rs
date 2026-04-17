@@ -104,80 +104,61 @@ impl NatForwarder {
         Ok(())
     }
     
-    /// Setup iptables rules for NAT
+    /// Add an iptables rule only if it doesn't already exist (idempotent).
+    /// Replaces -A with -C to check first, then adds only if missing.
+    #[cfg(target_os = "linux")]
+    fn iptables_add_once(args: &[&str]) {
+        use std::process::Command;
+        // Build check args: replace first "-A" with "-C"
+        let check_args: Vec<&str> = {
+            let mut replaced = false;
+            args.iter().map(|&s| {
+                if s == "-A" && !replaced { replaced = true; "-C" } else { s }
+            }).collect()
+        };
+        let already_exists = Command::new("iptables")
+            .args(&check_args)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if !already_exists {
+            let _ = Command::new("iptables").args(args).output();
+        }
+    }
+
+    /// Setup iptables rules for NAT (idempotent — safe to call on every restart)
     #[cfg(target_os = "linux")]
     fn setup_iptables(&self) -> Result<()> {
-        use std::process::Command;
-        
-        // Enable NAT masquerading
-        let output = Command::new("iptables")
-            .args([
-                "-t", "nat",
-                "-A", "POSTROUTING",
-                "-s", &format!("{}/24", self.tun_addr),
-                "-j", "MASQUERADE",
-            ])
-            .output();
-        
-        match output {
-            Ok(out) => {
-                if out.status.success() {
-                    info!("Added iptables MASQUERADE rule");
-                } else {
-                    let stderr = String::from_utf8_lossy(&out.stderr);
-                    warn!("iptables rule failed: {}", stderr);
-                }
-            }
-            Err(e) => {
-                warn!("iptables command not found: {}", e);
-            }
-        }
-        
-        // Allow forwarding
-        let _ = Command::new("iptables")
-            .args([
-                "-A", "FORWARD",
-                "-i", &self.tun_name,
-                "-j", "ACCEPT",
-            ])
-            .output();
-        
-        let _ = Command::new("iptables")
-            .args([
-                "-A", "FORWARD",
-                "-o", &self.tun_name,
-                "-m", "state",
-                "--state", "RELATED,ESTABLISHED",
-                "-j", "ACCEPT",
-            ])
-            .output();
+        // NAT masquerading — one rule per subnet, independent of TUN name
+        let masq_src = format!("{}/24", self.tun_addr);
+        Self::iptables_add_once(&[
+            "-t", "nat", "-A", "POSTROUTING",
+            "-s", &masq_src, "-j", "MASQUERADE",
+        ]);
+        info!("iptables MASQUERADE rule ensured");
 
-        // Clamp TCP MSS across the TUN boundary to avoid PMTU blackholes
-        // on download-heavy flows when the VPN MTU is lower than the uplink MTU.
-        let _ = Command::new("iptables")
-            .args([
-                "-t", "mangle",
-                "-A", "FORWARD",
-                "-o", &self.tun_name,
-                "-p", "tcp",
-                "--tcp-flags", "SYN,RST", "SYN",
-                "-j", "TCPMSS",
-                "--clamp-mss-to-pmtu",
-            ])
-            .output();
+        // Allow forwarding through this TUN
+        Self::iptables_add_once(&[
+            "-A", "FORWARD", "-i", &self.tun_name, "-j", "ACCEPT",
+        ]);
+        Self::iptables_add_once(&[
+            "-A", "FORWARD", "-o", &self.tun_name,
+            "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT",
+        ]);
 
-        let _ = Command::new("iptables")
-            .args([
-                "-t", "mangle",
-                "-A", "FORWARD",
-                "-i", &self.tun_name,
-                "-p", "tcp",
-                "--tcp-flags", "SYN,RST", "SYN",
-                "-j", "TCPMSS",
-                "--clamp-mss-to-pmtu",
-            ])
-            .output();
-        
+        // Clamp TCP MSS to avoid PMTU blackholes (download and upload)
+        Self::iptables_add_once(&[
+            "-t", "mangle", "-A", "FORWARD",
+            "-o", &self.tun_name, "-p", "tcp",
+            "--tcp-flags", "SYN,RST", "SYN", "-j", "TCPMSS", "--clamp-mss-to-pmtu",
+        ]);
+        Self::iptables_add_once(&[
+            "-t", "mangle", "-A", "FORWARD",
+            "-i", &self.tun_name, "-p", "tcp",
+            "--tcp-flags", "SYN,RST", "SYN", "-j", "TCPMSS", "--clamp-mss-to-pmtu",
+        ]);
+
+        info!("Added iptables MASQUERADE rule");
         Ok(())
     }
     
@@ -225,45 +206,40 @@ impl NatForwarder {
 
 impl Drop for NatForwarder {
     fn drop(&mut self) {
-        if self.writer.is_some() {
-            info!("Closing NAT TUN device: {}", self.tun_name);
-        }
-        
-        // Cleanup iptables (optional, rules persist)
+        info!("Cleaning up NAT TUN device: {}", self.tun_name);
+
+        // Cleanup ALL iptables rules added for this TUN device.
+        // This runs on graceful shutdown (SIGTERM). On SIGKILL it won't run,
+        // but setup_iptables() is now idempotent so duplicates won't accumulate.
         #[cfg(target_os = "linux")]
         {
             use std::process::Command;
+
+            // Remove NAT MASQUERADE
             let _ = Command::new("iptables")
-                .args([
-                    "-t", "nat",
-                    "-D", "POSTROUTING",
-                    "-s", &format!("{}/24", self.tun_addr),
-                    "-j", "MASQUERADE",
-                ])
+                .args(["-t", "nat", "-D", "POSTROUTING",
+                    "-s", &format!("{}/24", self.tun_addr), "-j", "MASQUERADE"])
                 .output();
 
+            // Remove FORWARD ACCEPT rules (were missing from Drop before!)
             let _ = Command::new("iptables")
-                .args([
-                    "-t", "mangle",
-                    "-D", "FORWARD",
-                    "-o", &self.tun_name,
-                    "-p", "tcp",
-                    "--tcp-flags", "SYN,RST", "SYN",
-                    "-j", "TCPMSS",
-                    "--clamp-mss-to-pmtu",
-                ])
+                .args(["-D", "FORWARD", "-i", &self.tun_name, "-j", "ACCEPT"])
+                .output();
+            let _ = Command::new("iptables")
+                .args(["-D", "FORWARD", "-o", &self.tun_name,
+                    "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT"])
                 .output();
 
+            // Remove mangle MSS clamping rules
             let _ = Command::new("iptables")
-                .args([
-                    "-t", "mangle",
-                    "-D", "FORWARD",
-                    "-i", &self.tun_name,
-                    "-p", "tcp",
-                    "--tcp-flags", "SYN,RST", "SYN",
-                    "-j", "TCPMSS",
-                    "--clamp-mss-to-pmtu",
-                ])
+                .args(["-t", "mangle", "-D", "FORWARD",
+                    "-o", &self.tun_name, "-p", "tcp",
+                    "--tcp-flags", "SYN,RST", "SYN", "-j", "TCPMSS", "--clamp-mss-to-pmtu"])
+                .output();
+            let _ = Command::new("iptables")
+                .args(["-t", "mangle", "-D", "FORWARD",
+                    "-i", &self.tun_name, "-p", "tcp",
+                    "--tcp-flags", "SYN,RST", "SYN", "-j", "TCPMSS", "--clamp-mss-to-pmtu"])
                 .output();
         }
     }
