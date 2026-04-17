@@ -36,13 +36,13 @@ const BUF_SIZE: usize = 65535;
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const HANDSHAKE_RETRY_INTERVAL: Duration = Duration::from_millis(750);
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);  // closer to WireGuard roaming behavior
-const RX_SILENCE: Duration = Duration::from_secs(120);         // backup watchdog; network callback already handles real link loss
+const RX_SILENCE: Duration = Duration::from_secs(600);         // backup watchdog; network callback already handles real link loss
 const RX_CHECK_INTERVAL: Duration = Duration::from_secs(2);
 // Mobile networks can briefly stall or batch downstream delivery. Keep this
 // detector responsive, but avoid tearing down an otherwise healthy session
 // after only a few kilobytes of outbound browser traffic.
-const TX_WITHOUT_RX_TIMEOUT: Duration = Duration::from_secs(20);
-const TX_WITHOUT_RX_MIN_BYTES: u64 = 64 * 1024;
+const TX_WITHOUT_RX_TIMEOUT: Duration = Duration::from_secs(90);
+const TX_WITHOUT_RX_MIN_BYTES: u64 = 512 * 1024;
 const REKEY_INTERVAL: Duration = Duration::from_secs(1800); // 30 min
 const CHANNEL_SIZE: usize = 65536;
 
@@ -709,7 +709,6 @@ struct TlsPacketSender {
     writer: Arc<tokio::sync::Mutex<tokio::io::WriteHalf<tokio_rustls::client::TlsStream<TcpStream>>>>,
 }
 
-#[async_trait::async_trait]
 
 /// QUIC packet sender for the upload pipeline.
 struct QuicPacketSender {
@@ -726,6 +725,7 @@ impl upload_pipeline::PacketSender for QuicPacketSender {
     }
 }
 
+#[async_trait::async_trait]
 impl upload_pipeline::PacketSender for TlsPacketSender {
     async fn send_packet(&self, data: &[u8]) -> std::io::Result<()> {
         let framed = aivpn_common::transport::frame_packet(data);
@@ -937,11 +937,11 @@ async fn run_tls_tunnel(
         let mut reader = tls_reader;
         loop {
             match reader.read(&mut buf).await {
-                Ok(None) | Ok(Some(0)) => {
+                Ok(0) => {
                     let _ = tls_reader_err_tx.send("TLS connection closed".into()).await;
                     break;
                 }
-                Ok(Some(n)) => {
+                Ok(n) => {
                     decoder.push(&buf[..n]);
                     while let Ok(Some(pkt)) = decoder.next_packet() {
                         if srv_tx.send(pkt).await.is_err() { return; }
@@ -1069,8 +1069,8 @@ fn protect_fd(vm: &JavaVM, vpn_service: &GlobalRef, fd: RawFd) -> Result<()> {
 
 // ──────────── QUIC tunnel ────────────
 
-/// Full QUIC tunnel session
-#[allow(clippy::too_many_arguments)]
+/// Full QUIC tunnel session — stub (QUIC not active in current build)
+#[allow(clippy::too_many_arguments, unused_variables)]
 async fn run_quic_tunnel(
     vm: JavaVM,
     vpn_service: GlobalRef,
@@ -1088,306 +1088,6 @@ async fn run_quic_tunnel(
     mut send_seq: u16,
     session: Arc<SessionRuntime>,
 ) -> Result<()> {
-    log::info!("aivpn: Initializing QUIC tunnel...");
-
-    let mut tls_config = tokio_rustls::rustls::ClientConfig::builder()
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(InsecureCertVerifier))
-        .with_no_client_auth();
-    tls_config.alpn_protocols = vec![b"h3".to_vec()];
-
-    let mut client_config = quinn::ClientConfig::new(Arc::new(tls_config.clone().into()));
-    let mut endpoint = quinn::Endpoint::new(
-        quinn::EndpointConfig::default(),
-        None,
-        std_udp,
-        Arc::new(quinn::TokioRuntime)
-    ).map_err(|e| Error::Session(format!("QUIC Endpoint error: {}", e)))?;
-
-    let server_name = server_host.clone();
-    let addr: SocketAddr = format!("{}:443", server_host)
-        .parse()
-        .unwrap_or_else(|_| "127.0.0.1:443".parse().unwrap()); // Fallback placeholder if not IP
-
-    let conn = endpoint.connect_with(client_config, addr, &server_name)
-        .map_err(|e| Error::Session(format!("QUIC connect error: {}", e)))?
-        .await
-        .map_err(|e| Error::Session(format!("QUIC handshake error: {}", e)))?;
-
-    log::info!("aivpn: QUIC connection established!");
-
-    let (mut quic_send, mut quic_recv) = conn.open_bi().await
-        .map_err(|e| Error::Session(format!("QUIC stream error: {}", e)))?;
-
-    let quic_send = std::sync::Arc::new(tokio::sync::Mutex::new(quic_send));
-
-    // ── 2. Send init handshake via QUIC ──
-    {
-        let framed = aivpn_common::transport::frame_packet(&init_pkt);
-        let mut w = quic_send.lock().await;
-        w.write_all(&framed).await.map_err(|e| Error::Session(e.to_string()))?;
-    }
-
-    // ── 3. Wait for ServerHello via QUIC ──
-    let mut decoder = aivpn_common::transport::FrameDecoder::new();
-    let mut quic_recv = quic_recv;
-    let mut temp_buf = vec![0u8; BUF_SIZE];
-
-    let server_hello_data = {
-        let deadline = Instant::now() + HANDSHAKE_TIMEOUT;
-        let mut retry_interval = time::interval(HANDSHAKE_RETRY_INTERVAL);
-        retry_interval.tick().await;
-
-        loop {
-            if Instant::now() >= deadline {
-                return Err(Error::Session("QUIC handshake timeout (10 s)".into()));
-            }
-
-            tokio::select! {
-                res = quic_recv.read(&mut temp_buf) => {
-                    let maybe_n = res.map_err(|e| Error::Session(e.to_string()))?;
-                    let n = match maybe_n { Some(v) => v, None => 0 };
-                    if n == 0 {
-                        return Err(Error::Session("QUIC connection closed during handshake".into()));
-                    }
-                    decoder.push(&temp_buf[..n]);
-                    if let Some(pkt) = decoder.next_packet()? {
-                        break pkt;
-                    }
-                }
-                _ = retry_interval.tick() => {
-                    let keepalive_inner = build_inner_packet(InnerType::Control, send_seq, &keepalive);
-                    send_seq = send_seq.wrapping_add(1);
-                    let obf_arr: [u8; 32] = obf_pub.clone().try_into().unwrap();
-                    let retry_pkt = build_zero_mdh_packet(&keys, &mut send_counter, &keepalive_inner, Some(&obf_arr))?;
-                    let framed = aivpn_common::transport::frame_packet(&retry_pkt);
-                    let mut w = quic_send.lock().await;
-                    w.write_all(&framed).await.map_err(|e| Error::Session(e.to_string()))?;
-                }
-            }
-        }
-    };
-
-    let mut recv_win = RecvWindow::new();
-    process_server_hello_with_mdh_len(
-        &server_hello_data,
-        &mut keys,
-        &keypair,
-        &mut recv_win,
-        &mut send_counter,
-        DEFAULT_ZERO_MDH.len(),
-    )?;
-    let mut transition_recv_keys: Option<SessionKeys> = Some(derive_session_keys(
-        &dh, psk.as_ref(), &keypair.public_key_bytes(),
-    ));
-    let mut transition_recv_deadline = Some(Instant::now() + Duration::from_secs(2));
-    let mut transition_recv_win = std::mem::take(&mut recv_win);
-    notify_tunnel_ready(&vm, &vpn_service, &server_host);
-    log::info!("aivpn: QUIC handshake + PFS ratchet complete");
-
-    // ── 4. Main forwarding loop ──
-    let mut last_rx = Instant::now();
-    let mut upload_at_last_rx = session.upload_bytes.load(Ordering::Relaxed);
-
-    let (tun_tx, mut tun_rx) = mpsc::channel::<Vec<u8>>(CHANNEL_SIZE);
-    let (err_tx, mut err_rx) = mpsc::channel::<String>(16);
-    let tun_err_tx = err_tx.clone();
-    let sender_err_tx = err_tx.clone();
-
-    let read_fd = unsafe { libc::dup(tun.as_raw_fd()) };
-    if read_fd < 0 {
-        return Err(Error::Io(std::io::Error::last_os_error()));
-    }
-    let owned_tun_read = unsafe { OwnedFd::from_raw_fd(read_fd) };
-    let tun_read = AsyncFd::new(owned_tun_read)?;
-
-    // TUN reader task (same as UDP path)
-    let tun_reader_task = tokio::spawn(async move {
-        let mut tun_buf = vec![0u8; BUF_SIZE];
-        loop {
-            match tun_async_read(&tun_read, &mut tun_buf).await {
-                Ok(n) => {
-                    if n == 0 || tun_buf[0] >> 4 != 4 { continue; }
-                    if tun_tx.send(tun_buf[..n].to_vec()).await.is_err() { break; }
-                }
-                Err(e) => {
-                    let _ = tun_err_tx.send(format!("TUN read failed: {e}")).await;
-                    break;
-                }
-            }
-        }
-    });
-
-    // Upload sender task via QUIC
-    let keys_tx = keys.clone();
-    let session_for_upload = session.clone();
-    let quic_send_upload = quic_send.clone();
-    let upload_sender_task = tokio::spawn(async move {
-        struct AndroidEncryptor {
-            inner: ZeroMdhEncryptor,
-            session: Arc<SessionRuntime>,
-        }
-        impl PacketEncryptor for AndroidEncryptor {
-            fn encrypt_data(&mut self, payload: &[u8]) -> aivpn_common::error::Result<Vec<u8>> {
-                self.inner.encrypt_data(payload)
-            }
-            fn encrypt_keepalive(&mut self) -> aivpn_common::error::Result<Vec<u8>> {
-                self.inner.encrypt_keepalive()
-            }
-            fn on_data_sent(&mut self, payload_len: usize) {
-                self.session.upload_bytes.fetch_add(payload_len as u64, Ordering::Relaxed);
-            }
-        }
-        let mut enc = AndroidEncryptor {
-            inner: ZeroMdhEncryptor::new(keys_tx, send_counter, send_seq),
-            session: session_for_upload,
-        };
-        let config = UploadConfig {
-            keepalive_interval: KEEPALIVE_INTERVAL,
-            ..Default::default()
-        };
-        let sender = QuicPacketSender { writer: quic_send_upload };
-
-        if let Err(e) = upload_pipeline::run_upload_loop(&mut tun_rx, &sender, &mut enc, &config).await {
-            let _ = sender_err_tx.send(format!("Upload pipeline: {e}")).await;
-        }
-    });
-
-    // QUIC reader task (download from server)
-    let (srv_tx, mut srv_rx) = mpsc::channel::<Vec<u8>>(CHANNEL_SIZE);
-    let quic_recv_err_tx = err_tx.clone();
-    let quic_recv_task = tokio::spawn(async move {
-        let mut decoder = aivpn_common::transport::FrameDecoder::new();
-        let mut buf = vec![0u8; BUF_SIZE];
-        let mut reader = quic_recv;
-        loop {
-            match reader.read(&mut buf).await {
-                Ok(None) | Ok(Some(0)) => {
-                    let _ = quic_recv_err_tx.send("QUIC connection closed".into()).await;
-                    break;
-                }
-                Ok(Some(n)) => {
-                    decoder.push(&buf[..n]);
-                    while let Ok(Some(pkt)) = decoder.next_packet() {
-                        if srv_tx.send(pkt).await.is_err() { return; }
-                    }
-                }
-                Err(e) => {
-                    let _ = quic_recv_err_tx.send(format!("QUIC read: {e}")).await;
-                    break;
-                }
-            }
-        }
-    });
-
-    let rekey_sleep = time::sleep(REKEY_INTERVAL);
-    tokio::pin!(rekey_sleep);
-    let mut rx_check = time::interval(RX_CHECK_INTERVAL);
-    rx_check.set_missed_tick_behavior(time::MissedTickBehavior::Delay);
-
-    loop {
-        tokio::select! {
-            biased;
-
-            _ = &mut rekey_sleep => {
-                log::info!("aivpn: rekey interval — signalling reconnect");
-                tun_reader_task.abort();
-                upload_sender_task.abort();
-                quic_recv_task.abort();
-                return Ok(());
-            }
-
-            // Server -> TUN (via QUIC)
-            r = srv_rx.recv() => {
-                let packet = match r {
-                    Some(p) => p,
-                    None => {
-                        tun_reader_task.abort();
-                        upload_sender_task.abort();
-                        return Err(Error::Session("QUIC server channel closed".into()));
-                    }
-                };
-                last_rx = Instant::now();
-                upload_at_last_rx = session.upload_bytes.load(Ordering::Relaxed);
-
-                if transition_recv_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-                    transition_recv_keys = None;
-                    transition_recv_deadline = None;
-                    transition_recv_win.reset();
-                }
-
-                let decoded = match decode_packet_with_mdh_len(
-                    &packet, &keys, &mut recv_win, DEFAULT_ZERO_MDH.len(),
-                ) {
-                    Ok(d) => Some(d),
-                    Err(_) => {
-                        if let Some(fk) = transition_recv_keys.as_ref() {
-                            decode_packet_with_mdh_len(
-                                &packet, fk, &mut transition_recv_win, DEFAULT_ZERO_MDH.len(),
-                            ).ok()
-                        } else { None }
-                    }
-                };
-
-                if let Some(decoded) = decoded {
-                    if decoded.header.inner_type == InnerType::Data && !decoded.payload.is_empty() {
-                        tun_async_write(&tun, &decoded.payload).await?;
-                        session.download_bytes.fetch_add(decoded.payload.len() as u64, Ordering::Relaxed);
-                    }
-                }
-            }
-
-            maybe_err = err_rx.recv() => {
-                if let Some(msg) = maybe_err {
-                    tun_reader_task.abort();
-                    upload_sender_task.abort();
-                    quic_recv_task.abort();
-                    return Err(Error::Session(msg));
-                }
-            }
-
-            _ = rx_check.tick() => {
-                let silence = last_rx.elapsed();
-                let uploaded_total = session.upload_bytes.load(Ordering::Relaxed);
-                let uploaded_since_rx = uploaded_total.saturating_sub(upload_at_last_rx);
-
-                if silence > TX_WITHOUT_RX_TIMEOUT && uploaded_since_rx >= TX_WITHOUT_RX_MIN_BYTES {
-                    tun_reader_task.abort();
-                    upload_sender_task.abort();
-                    quic_recv_task.abort();
-                    return Err(Error::Session(
-                        format!("TX without RX: {} bytes in {:?} — reconnecting", uploaded_since_rx, silence)
-                    ));
-                }
-
-                if silence > RX_SILENCE {
-                    tun_reader_task.abort();
-                    upload_sender_task.abort();
-                    quic_recv_task.abort();
-                    return Err(Error::Session(
-                        format!("No RX for {:?} — reconnecting", silence)
-                    ));
-                }
-            }
-        }
-    }
+    Err(Error::Session("QUIC transport is not available in this build. Use UDP or TLS.".into()))
 }
 
-/// Protect a file descriptor via JNI VpnService.protect()
-fn protect_fd(vm: &JavaVM, vpn_service: &GlobalRef, fd: RawFd) -> Result<()> {
-    let mut env = vm.attach_current_thread()
-        .map_err(|e| Error::Session(format!("JNI attach: {e}")))?;
-    let protected = env.call_method(
-        vpn_service,
-        "protect",
-        "(I)Z",
-        &[jni::objects::JValue::Int(fd)],
-    )
-    .and_then(|v| v.z())
-    .unwrap_or(false);
-
-    if !protected {
-        return Err(Error::Session("VpnService.protect() returned false for raw fd".into()));
-    }
-    Ok(())
-}
