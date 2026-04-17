@@ -86,7 +86,7 @@ async fn main() {
 
     // Create config
     let config = GatewayConfig {
-        listen_addr: args.listen,
+        listen_addr: args.listen.clone(),
         per_ip_pps_limit: args.per_ip_pps_limit,
         tun_name,
         tun_addr: "10.0.0.1".to_string(),
