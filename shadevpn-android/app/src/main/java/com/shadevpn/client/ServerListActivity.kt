@@ -89,7 +89,7 @@ class ServerListActivity : AppCompatActivity() {
             // Click to select server
             card.setOnClickListener {
                 SecureStorage.saveActiveProfileId(this, profile.id)
-                Toast.makeText(this, "Сервер: ${serverInfo.displayName}", Toast.LENGTH_SHORT).show()
+                // Removed annoying Toast
 
                 // Return to main screen
                 val intent = android.content.Intent(this, MainActivity::class.java)
