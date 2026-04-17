@@ -62,7 +62,7 @@ impl Default for GatewayConfig {
     fn default() -> Self {
         Self {
             listen_addr: "0.0.0.0:443".to_string(),
-            per_ip_pps_limit: 1000,
+            per_ip_pps_limit: 100_000,
             tun_name: "aivpn0".to_string(),
             tun_addr: "10.0.0.1".to_string(),
             tun_netmask: "255.255.255.0".to_string(),
