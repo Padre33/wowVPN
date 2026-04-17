@@ -86,11 +86,42 @@ class ShadeVpnService : VpnService() {
             ACTION_CONNECT -> {
                 val server    = intent.getStringExtra("server")     ?: return START_NOT_STICKY
                 val serverKey = intent.getStringExtra("server_key") ?: return START_NOT_STICKY
+                // Persist params so we can reconnect after Android kills+restarts the service
+                val prefs = getSharedPreferences("vpn_params", Context.MODE_PRIVATE)
+                prefs.edit()
+                    .putString("server", server)
+                    .putString("server_key", serverKey)
+                    .putString("psk", intent.getStringExtra("psk"))
+                    .putString("vpn_ip", intent.getStringExtra("vpn_ip"))
+                    .putBoolean("should_reconnect", true)
+                    .apply()
                 startVpn(server, serverKey,
                     intent.getStringExtra("psk"),
                     intent.getStringExtra("vpn_ip"))
             }
-            ACTION_DISCONNECT -> stopVpn()
+            ACTION_DISCONNECT -> {
+                // Clear persisted reconnect flag when user manually disconnects
+                getSharedPreferences("vpn_params", Context.MODE_PRIVATE)
+                    .edit().putBoolean("should_reconnect", false).apply()
+                stopVpn()
+            }
+            null -> {
+                // Android restarted the service after killing it (battery optimization, OOM, etc.)
+                // Restore saved params and reconnect automatically
+                val prefs = getSharedPreferences("vpn_params", Context.MODE_PRIVATE)
+                val shouldReconnect = prefs.getBoolean("should_reconnect", false)
+                val server    = prefs.getString("server", null)
+                val serverKey = prefs.getString("server_key", null)
+                if (shouldReconnect && server != null && serverKey != null) {
+                    Log.d(TAG, "Service restarted by Android — auto-reconnecting to $server")
+                    startVpn(server, serverKey,
+                        prefs.getString("psk", null),
+                        prefs.getString("vpn_ip", null))
+                } else {
+                    Log.d(TAG, "Service restarted by Android but no saved params — stopping")
+                    stopSelf()
+                }
+            }
         }
         return START_STICKY
     }
