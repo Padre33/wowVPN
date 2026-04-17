@@ -692,8 +692,11 @@ COUNTRY_FLAGS = {
 
 def get_flag(location: str) -> str:
     """Get country flag emoji from location string"""
+    import re
+    # Match whole words to avoid 'es' matching 'estonia' or 'nl' matching 'finland'
+    loc_lower = location.lower()
     for key, flag in COUNTRY_FLAGS.items():
-        if key.lower() in location.lower():
+        if re.search(r'\b' + re.escape(key.lower()) + r'\b', loc_lower):
             return flag
     return "🌐"
 
