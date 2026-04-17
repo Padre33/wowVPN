@@ -57,6 +57,22 @@ pub struct ServerArgs {
     /// Per-IP packet rate limit for incoming UDP traffic.
     #[arg(long, env = "AIVPN_PER_IP_PPS_LIMIT", default_value_t = 50000)]
     pub per_ip_pps_limit: u64,
+
+    /// Transport mode: "udp" (default), "tls", or "both"
+    #[arg(long, default_value = "udp", env = "SHADEVPN_TRANSPORT")]
+    pub transport: String,
+
+    /// Path to TLS certificate file (PEM). Required when --transport is "tls" or "both".
+    #[arg(long, env = "SHADEVPN_TLS_CERT")]
+    pub tls_cert: Option<String>,
+
+    /// Path to TLS private key file (PEM). Required when --transport is "tls" or "both".
+    #[arg(long, env = "SHADEVPN_TLS_KEY")]
+    pub tls_key: Option<String>,
+
+    /// TLS listen address (default: same as --listen but TCP)
+    #[arg(long, default_value = "0.0.0.0:443", env = "SHADEVPN_TLS_LISTEN")]
+    pub tls_listen: String,
 }
 
 /// AIVPN Server instance

@@ -30,6 +30,7 @@ thiserror.workspace = true
 bytes.workspace = true
 chrono.workspace = true
 tracing.workspace = true
+async-trait = "0.1"
 
 # Async (optional — needed for upload_pipeline)
 tokio = { workspace = true, optional = true }

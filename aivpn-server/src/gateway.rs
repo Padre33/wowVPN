@@ -80,11 +80,16 @@ impl Default for GatewayConfig {
 ///
 /// Holds a pool of pre-generated masks. When neural resonance detects
 /// that a mask is compromised by DPI, the catalog provides a replacement.
+/// Compromised masks auto-recover after a cooldown period as new randomized variants.
 pub struct MaskCatalog {
     /// Available masks (mask_id → MaskProfile)
     masks: DashMap<String, MaskProfile>,
-    /// Compromised mask IDs — never reuse
+    /// Compromised mask IDs with cooldown (mask_id → timestamp)
     compromised: DashMap<String, Instant>,
+    /// Cooldown duration before a new variant is generated
+    cooldown: Duration,
+    /// Counter for generating unique mask IDs
+    variant_counter: std::sync::atomic::AtomicU32,
 }
 
 impl MaskCatalog {
@@ -93,6 +98,8 @@ impl MaskCatalog {
         let catalog = Self {
             masks: DashMap::new(),
             compromised: DashMap::new(),
+            cooldown: Duration::from_secs(300), // 5 minutes cooldown
+            variant_counter: std::sync::atomic::AtomicU32::new(1),
         };
         // Seed with built-in masks
         let m1 = preset_masks::webrtc_zoom_v3();
@@ -104,19 +111,153 @@ impl MaskCatalog {
 
     /// Register a new mask (e.g., received via passive distribution or neural unpack)
     pub fn register_mask(&self, mask: MaskProfile) {
-        if !self.compromised.contains_key(&mask.mask_id) {
-            self.masks.insert(mask.mask_id.clone(), mask);
+        self.masks.insert(mask.mask_id.clone(), mask);
+    }
+
+    /// Mark a mask as compromised — remove from rotation temporarily
+    pub fn mark_compromised(&self, mask_id: &str) {
+        self.masks.remove(mask_id);
+        self.compromised.insert(mask_id.to_string(), Instant::now());
+    }
+
+    /// Generate a new randomized mask variant based on webrtc/quic templates
+    fn generate_variant(&self) -> MaskProfile {
+        use aivpn_common::mask::*;
+        use rand::Rng;
+
+        let mut rng = rand::thread_rng();
+        let variant_num = self.variant_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+        // Randomly choose base: WebRTC or QUIC
+        let is_webrtc = rng.gen_bool(0.5);
+
+        let mask_id = if is_webrtc {
+            format!("webrtc_v3_r{}", variant_num)
+        } else {
+            format!("quic_v2_r{}", variant_num)
+        };
+
+        // Randomize jitter range (different every time)
+        let jitter_min: f64 = rng.gen_range(1.0..8.0);
+        let jitter_max: f64 = jitter_min + rng.gen_range(3.0..15.0);
+
+        // Randomize IAT parameters
+        let iat_param1: f64 = rng.gen_range(1.5..4.0);
+        let iat_param2: f64 = rng.gen_range(0.1..0.8);
+
+        // Randomize padding
+        let pad_min: u16 = rng.gen_range(0..16);
+        let pad_max: u16 = pad_min + rng.gen_range(16..96);
+
+        // Randomize header template (different "fingerprint" each time)
+        let header: Vec<u8> = if is_webrtc {
+            vec![0x00, 0x01, rng.gen(), rng.gen()]
+        } else {
+            vec![0xC0, rng.gen(), rng.gen(), 0x00]
+        };
+
+        // Generate random signature vector (non-zero for meaningful neural checks)
+        let signature_vector: Vec<f32> = (0..64)
+            .map(|_| rng.gen_range(-1.0..1.0))
+            .collect();
+
+        let spoof_protocol = if is_webrtc {
+            SpoofProtocol::WebRTC_STUN
+        } else {
+            SpoofProtocol::QUIC
+        };
+
+        let iat_dist = if is_webrtc {
+            IATDistribution {
+                dist_type: IATDistType::LogNormal,
+                params: vec![iat_param1, iat_param2],
+                jitter_range_ms: (jitter_min, jitter_max),
+            }
+        } else {
+            IATDistribution {
+                dist_type: IATDistType::Exponential,
+                params: vec![rng.gen_range(0.05..0.2)],
+                jitter_range_ms: (jitter_min, jitter_max),
+            }
+        };
+
+        info!(
+            "Generated mask variant '{}' (jitter={:.1}-{:.1}ms, pad={}-{})",
+            mask_id, jitter_min, jitter_max, pad_min, pad_max
+        );
+
+        MaskProfile {
+            mask_id,
+            version: 1,
+            created_at: 0,
+            expires_at: u64::MAX,
+            spoof_protocol,
+            header_template: header,
+            eph_pub_offset: 4,
+            eph_pub_length: 32,
+            size_distribution: SizeDistribution {
+                dist_type: SizeDistType::Histogram,
+                bins: vec![
+                    (64, 128, rng.gen_range(0.15..0.45)),
+                    (256, 512, rng.gen_range(0.25..0.50)),
+                    (768, 1200, rng.gen_range(0.15..0.40)),
+                ],
+                parametric_type: None,
+                parametric_params: None,
+            },
+            iat_distribution: iat_dist,
+            padding_strategy: PaddingStrategy::RandomUniform { min: pad_min, max: pad_max },
+            fsm_states: vec![
+                FSMState {
+                    state_id: 0,
+                    transitions: vec![
+                        FSMTransition {
+                            condition: TransitionCondition::AfterDuration(rng.gen_range(3000..8000)),
+                            next_state: 1,
+                            size_override: None,
+                            iat_override: None,
+                            padding_override: None,
+                        }
+                    ],
+                },
+                FSMState {
+                    state_id: 1,
+                    transitions: vec![],
+                },
+            ],
+            fsm_initial_state: 0,
+            signature_vector,
+            reverse_profile: None,
+            signature: [0u8; 64],
         }
     }
 
-    /// Mark a mask as compromised — remove from rotation
-    pub fn mark_compromised(&self, mask_id: &str) {
-        self.compromised.insert(mask_id.to_string(), Instant::now());
-        self.masks.remove(mask_id);
+    /// Recycle expired compromised masks — generate NEW variants
+    pub fn recycle_expired(&self) {
+        let expired: Vec<String> = self.compromised.iter()
+            .filter(|e| e.value().elapsed() > self.cooldown)
+            .map(|e| e.key().clone())
+            .collect();
+
+        for mask_id in expired {
+            self.compromised.remove(&mask_id);
+            // Generate a fresh new variant instead of restoring the old one
+            let new_mask = self.generate_variant();
+            self.masks.insert(new_mask.mask_id.clone(), new_mask);
+        }
     }
 
     /// Select the best non-compromised mask, excluding `current_mask_id`
     pub fn select_fallback(&self, current_mask_id: &str) -> Option<MaskProfile> {
+        // First, try to recycle any expired masks
+        self.recycle_expired();
+
+        // If pool is empty, generate a fresh mask immediately
+        if self.masks.len() <= 1 {
+            let new_mask = self.generate_variant();
+            self.masks.insert(new_mask.mask_id.clone(), new_mask);
+        }
+
         self.masks.iter()
             .filter(|e| e.key() != current_mask_id)
             .map(|e| e.value().clone())

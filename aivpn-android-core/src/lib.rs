@@ -40,10 +40,12 @@ pub extern "system" fn Java_com_aivpn_client_AivpnJni_runTunnel<'local>(
     _class: JClass<'local>,
     vpn_service: JObject<'local>,
     tun_fd: jint,
+    tcp_fd: jint,
     server_host: JString<'local>,
     server_port: jint,
     server_key_arr: JByteArray<'local>,
     psk_obj: JObject<'local>, // nullable JByteArray
+    transport_str: JString<'local>,
 ) -> jstring {
     // ── Unpack arguments ──
     let host = match env.get_string(&server_host) {
@@ -76,6 +78,11 @@ pub extern "system" fn Java_com_aivpn_client_AivpnJni_runTunnel<'local>(
         }
     };
 
+    let transport = match env.get_string(&transport_str) {
+        Ok(s) => String::from(s),
+        Err(e) => return make_str(&mut env, &format!("bad transport: {e}")),
+    };
+
     // ── Get JavaVM for use inside the tokio runtime ──
     let vm = match env.get_java_vm() {
         Ok(vm) => vm,
@@ -99,10 +106,12 @@ pub extern "system" fn Java_com_aivpn_client_AivpnJni_runTunnel<'local>(
         vm,
         vpn_global,
         tun_fd,
+        tcp_fd,
         host,
         server_port as u16,
         key_bytes,
         psk,
+        transport,
     ));
 
     match result {

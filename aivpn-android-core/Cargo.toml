@@ -18,3 +18,5 @@ tokio     = { version = "1.35", features = ["rt", "net", "time", "io-util", "mac
 rand      = "0.8"
 log       = "0.4"
 android_logger = "0.14"
+tokio-rustls = { version = "0.26", default-features = false, features = ["logging", "tls12", "ring"] }
+async-trait = "0.1"

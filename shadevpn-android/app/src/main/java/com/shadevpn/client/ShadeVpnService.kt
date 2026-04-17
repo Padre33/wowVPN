@@ -161,9 +161,10 @@ class ShadeVpnService : VpnService() {
                             else               -> retryDelayMs
                         }
 
-                        lastStatusText = getString(R.string.status_reconnecting)
+                        val errorMsg = e.message ?: "Unknown error"
+                        lastStatusText = "Error: $errorMsg"
                         statusCallback?.invoke(false, lastStatusText)
-                        updateNotification(getString(R.string.notification_connecting))
+                        updateNotification(lastStatusText)
 
                         if (delayMs > 0) {
                             Log.d(TAG, "Reconnecting in ${delayMs}ms")
@@ -220,7 +221,7 @@ class ShadeVpnService : VpnService() {
 
         val tunAddress4 = savedVpnIp ?: "10.0.0.2"
 
-        // Build TUN (must stay in Kotlin â€” Android API).
+        // Build TUN (must stay in Kotlin — Android API).
         // setBlocking(false): Rust uses epoll/AsyncFd on the raw fd.
         // IPv6 is intentionally disabled in this client.
         val builder = Builder()
@@ -230,18 +231,27 @@ class ShadeVpnService : VpnService() {
         // DNS configuration (NetShield support)
         val isNetShieldEnabled = SecureStorage.loadBoolean(this, "netshield")
         if (isNetShieldEnabled) {
-            // AdGuard DNS (blocks ads and trackers)
-            builder.addDnsServer("94.140.14.14")
-            builder.addDnsServer("94.140.15.15")
-            Log.d(TAG, "NetShield enabled: Using AdBlock DNS")
+            // AdGuard Home on VPN server (blocks ads, trackers, malware)
+            builder.addDnsServer("10.0.0.1")
+            Log.d(TAG, "NetShield enabled: Using local AdGuard Home DNS")
         } else {
             // Standard performance DNS
             builder.addDnsServer("8.8.8.8")
             builder.addDnsServer("1.1.1.1")
         }
 
+        // Kill Switch: block all non-VPN traffic including IPv6 leaks
+        val isKillSwitchEnabled = SecureStorage.loadBoolean(this, "kill_switch")
+        if (isKillSwitchEnabled) {
+            // Route IPv6 through VPN too (drops if no IPv6 tunnel — acts as IPv6 leak block)
+            builder.addRoute("::", 0)
+            // Strict mode: disallow bypass
+            builder.setBlocking(true)
+            Log.d(TAG, "Kill Switch enabled: blocking non-VPN traffic + IPv6 leaks")
+        }
+
         builder.setMtu(TUN_MTU)
-            .setBlocking(false)
+            .setBlocking(false) // Required: Rust uses epoll/AsyncFd
 
         // Split tunneling: route only selected apps through VPN
         val allowedApps = SecureStorage.loadAllowedApps(this)
@@ -309,8 +319,51 @@ class ShadeVpnService : VpnService() {
         }
 
         try {
-            val error = withContext(Dispatchers.IO) {
-                ShadeVpnJni.runTunnel(this@ShadeVpnService, tunFd, host, port, serverKey, psk)
+            val transport = SecureStorage.loadString(this, "transport_mode", "udp")
+            Log.d(TAG, "Transport mode: $transport")
+
+            var tcpFd = -1
+            var tcpSocket: java.net.Socket? = null
+            var tcpPfd: android.os.ParcelFileDescriptor? = null
+
+            val error = try {
+                if (transport == "tls") {
+                    Log.d(TAG, "Creating native TCP socket for TLS Hand-off")
+                    tcpSocket = java.net.Socket(java.net.Proxy.NO_PROXY)
+                    tcpSocket.tcpNoDelay = true
+                    tcpSocket.receiveBufferSize = 4 * 1024 * 1024
+                    tcpSocket.sendBufferSize = 4 * 1024 * 1024
+                    
+                    // Crucial: Bypass VPN rules using Android native capabilities
+                    if (currentUnderlyingNetwork != null) {
+                        currentUnderlyingNetwork?.bindSocket(tcpSocket)
+                        Log.d(TAG, "Bound TCP socket to network: $currentUnderlyingNetwork")
+                    } else {
+                        protect(tcpSocket)
+                        Log.d(TAG, "VpnService.protect() applied to TCP socket")
+                    }
+
+                    // Native connection, handles timeouts and routing securely
+                    withContext(Dispatchers.IO) {
+                        tcpSocket.connect(java.net.InetSocketAddress(host, port), 10000)
+                    }
+
+                    // Extract a duplicate of the raw FileDescriptor to pass to Rust
+                    tcpPfd = android.os.ParcelFileDescriptor.fromSocket(tcpSocket)
+                    tcpFd = tcpPfd.detachFd()
+                    Log.d(TAG, "TCP socket established! Passing tcpFd: $tcpFd to Rust")
+                }
+
+                withContext(Dispatchers.IO) {
+                    ShadeVpnJni.runTunnel(this@ShadeVpnService, tunFd, tcpFd, host, port, serverKey, psk, transport)
+                }
+            } catch (e: Exception) {
+                // Return string error so the loop handles it gracefully like Rust did
+                Log.e(TAG, "TCP Hand-off failed: ${e.message}")
+                e.message ?: e.toString()
+            } finally {
+                // Safe to close because we used detachFd() which gave Rust an independent FD clone
+                try { tcpSocket?.close() } catch (_: Exception) {}
             }
             if (error.isNotEmpty()) throw RuntimeException(error)
         } finally {

@@ -17,11 +17,13 @@ object ShadeVpnJni {
     fun runTunnel(
         vpnService: VpnService,
         tunFd: Int,
+        tcpFd: Int,
         serverHost: String,
         serverPort: Int,
         serverKey: ByteArray,
         psk: ByteArray?,
-    ): String = AivpnJni.runTunnel(vpnService, tunFd, serverHost, serverPort, serverKey, psk)
+        transport: String = "udp",
+    ): String = AivpnJni.runTunnel(vpnService, tunFd, tcpFd, serverHost, serverPort, serverKey, psk, transport)
 
     fun stopTunnel() = AivpnJni.stopTunnel()
 

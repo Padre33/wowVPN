@@ -103,9 +103,62 @@ async fn main() {
     match AivpnServer::new(config) {
         Ok(server) => {
             info!("Server initialized successfully");
-            if let Err(e) = server.run().await {
-                error!("Server error: {}", e);
-                std::process::exit(1);
+
+            // Start TLS bridge if transport mode requires it
+            let transport_mode = args.transport.to_lowercase();
+            if transport_mode == "tls" || transport_mode == "both" {
+                let tls_cert = match args.tls_cert {
+                    Some(ref p) => p.clone(),
+                    None => {
+                        error!("--tls-cert is required when --transport is '{}'. Generate with:", transport_mode);
+                        error!("  openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj '/CN=localhost'");
+                        std::process::exit(1);
+                    }
+                };
+                let tls_key = match args.tls_key {
+                    Some(ref p) => p.clone(),
+                    None => {
+                        error!("--tls-key is required when --transport is '{}'", transport_mode);
+                        std::process::exit(1);
+                    }
+                };
+
+                let bridge_config = aivpn_server::TlsBridgeConfig {
+                    tls_listen_addr: args.tls_listen.clone(),
+                    gateway_udp_addr: format!("127.0.0.1:{}", args.listen.split(':').last().unwrap_or("443")),
+                    tls_cert_path: tls_cert,
+                    tls_key_path: tls_key,
+                };
+
+                match aivpn_server::TlsBridge::new(bridge_config) {
+                    Ok(bridge) => {
+                        info!("🔒 TLS transport enabled (mode: {})", transport_mode);
+                        tokio::spawn(async move {
+                            if let Err(e) = bridge.run().await {
+                                error!("TLS Bridge error: {}", e);
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        error!("Failed to initialize TLS bridge: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+
+            // Run UDP gateway (blocks forever)
+            if transport_mode == "tls" {
+                // TLS-only mode: no UDP gateway, just keep running
+                info!("Running in TLS-only mode (no UDP listener)");
+                // The TLS bridge was spawned above, just keep the runtime alive
+                tokio::signal::ctrl_c().await.ok();
+                info!("Shutting down...");
+            } else {
+                // "udp" or "both" mode: run the UDP gateway
+                if let Err(e) = server.run().await {
+                    error!("Server error: {}", e);
+                    std::process::exit(1);
+                }
             }
         }
         Err(e) => {
@@ -315,6 +368,10 @@ mod tests {
             show_client: None,
             server_ip: None,
             per_ip_pps_limit: 1000,
+            transport: "udp".to_string(),
+            tls_cert: None,
+            tls_key: None,
+            tls_listen: "0.0.0.0:443".to_string(),
         }
     }
 

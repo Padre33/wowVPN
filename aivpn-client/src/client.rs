@@ -5,6 +5,7 @@
 //! - Mimicry Engine for traffic shaping
 //! - Key exchange and session management
 //! - Control plane handling
+//! - TLS/TCP transport for DPI bypass
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -12,7 +13,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use portable_atomic::AtomicU64;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tracing::{info, debug, error, warn};
@@ -34,6 +35,21 @@ use aivpn_common::upload_pipeline::{self, PacketEncryptor, UploadConfig};
 use crate::mimicry::MimicryEngine;
 use crate::tunnel::{Tunnel, TunnelConfig};
 
+/// Transport mode selection
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TransportMode {
+    /// Classic UDP transport (fast, good for mobile)
+    Udp,
+    /// TLS/TCP transport (invisible to DPI, best for WiFi in Russia)
+    Tls,
+}
+
+impl Default for TransportMode {
+    fn default() -> Self {
+        Self::Udp
+    }
+}
+
 /// Client configuration
 #[derive(Debug, Clone)]
 pub struct ClientConfig {
@@ -44,6 +60,10 @@ pub struct ClientConfig {
     pub tun_config: TunnelConfig,
     /// Server's Ed25519 signing public key for authentication (HIGH-6)
     pub server_signing_pub: Option<[u8; 32]>,
+    /// Transport mode: UDP (default) or TLS
+    pub transport: TransportMode,
+    /// Whether to accept self-signed TLS certificates (for testing)
+    pub tls_insecure: bool,
 }
 
 /// Client state
@@ -69,6 +89,8 @@ pub struct AivpnClient {
     state: ClientState,
     tunnel: Tunnel,
     udp_socket: Option<Arc<UdpSocket>>,
+    /// TLS write half (for sending framed packets)
+    tls_writer: Option<Arc<tokio::sync::Mutex<tokio::io::WriteHalf<tokio_rustls::client::TlsStream<tokio::net::TcpStream>>>>>,
     mimicry_engine: Option<MimicryEngine>,
     session_keys: Option<SessionKeys>,
     upload_state: Option<Arc<Mutex<UploadCryptoState>>>,
@@ -86,6 +108,8 @@ pub struct AivpnClient {
     // Pre-allocated buffers for zero-copy I/O (OPTIMIZATION)
     _send_buf: Vec<u8>,
     _recv_buf: Vec<u8>,
+    /// TLS read half (taken by run() for the read loop)
+    _tls_reader: Option<tokio::io::ReadHalf<tokio_rustls::client::TlsStream<tokio::net::TcpStream>>>,
 }
 
 impl AivpnClient {
@@ -101,6 +125,7 @@ impl AivpnClient {
             state: ClientState::Provisioned,
             tunnel,
             udp_socket: None,
+            tls_writer: None,
             mimicry_engine: None,
             session_keys: None,
             upload_state: None,
@@ -117,12 +142,13 @@ impl AivpnClient {
             // Pre-allocate buffers to MAX_PACKET_SIZE to avoid reallocations
             _send_buf: Vec::with_capacity(MAX_PACKET_SIZE),
             _recv_buf: Vec::with_capacity(MAX_PACKET_SIZE),
+            _tls_reader: None,
         })
     }
     
     /// Connect to server
     pub async fn connect(&mut self) -> Result<()> {
-        info!("Connecting to AIVPN server...");
+        info!("Connecting to ShadeVPN server...");
         self.state = ClientState::Connecting;
         
         // Create TUN device first
@@ -133,34 +159,19 @@ impl AivpnClient {
             .map_err(|e: std::net::AddrParseError| Error::Io(
                 std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string())
             ))?;
-        
-        // Create UDP socket with 4MB OS buffers (OPTIMIZATION)
-        let domain = if server_addr.is_ipv4() { socket2::Domain::IPV4 } else { socket2::Domain::IPV6 };
-        let socket2_sock = socket2::Socket::new(
-            domain,
-            socket2::Type::DGRAM,
-            Some(socket2::Protocol::UDP),
-        ).map_err(Error::Io)?;
-        
-        socket2_sock.set_nonblocking(true).map_err(Error::Io)?;
-        let _ = socket2_sock.set_recv_buffer_size(4 * 1024 * 1024);
-        let _ = socket2_sock.set_send_buffer_size(4 * 1024 * 1024);
-        
-        // Bind to any ephemeral port
-        let any_addr: SocketAddr = if server_addr.is_ipv4() { "0.0.0.0:0".parse().unwrap() } else { "[::]:0".parse().unwrap() };
-        socket2_sock.bind(&any_addr.into()).map_err(Error::Io)?;
-        
-        // Connect UDP socket
-        socket2_sock.connect(&server_addr.into()).map_err(Error::Io)?;
-        
-        let std_sock: std::net::UdpSocket = socket2_sock.into();
-        let socket = UdpSocket::from_std(std_sock).map_err(Error::Io)?;
-        
-        self.udp_socket = Some(Arc::new(socket));
+
+        match self.config.transport {
+            TransportMode::Udp => {
+                self.connect_udp(server_addr).await?;
+            }
+            TransportMode::Tls => {
+                self.connect_tls(server_addr).await?;
+            }
+        }
 
         self.tunnel.set_server_ip(server_addr.ip().to_string());
         
-        // Enable full tunnel only after the server UDP path is established.
+        // Enable full tunnel only after the server path is established.
         if self.config.tun_config.full_tunnel {
             self.tunnel.enable_full_tunnel()?;
         }
@@ -177,9 +188,96 @@ impl AivpnClient {
         ));
         
         self.state = ClientState::Connected;
-        info!("Connected to server at {}", self.config.server_addr);
+        let mode = match self.config.transport {
+            TransportMode::Udp => "UDP",
+            TransportMode::Tls => "TLS/TCP",
+        };
+        info!("Connected to server at {} via {}", self.config.server_addr, mode);
         info!("TUN device: {}", self.tunnel.name());
         
+        Ok(())
+    }
+
+    /// Connect via UDP (original transport)
+    async fn connect_udp(&mut self, server_addr: SocketAddr) -> Result<()> {
+        let domain = if server_addr.is_ipv4() { socket2::Domain::IPV4 } else { socket2::Domain::IPV6 };
+        let socket2_sock = socket2::Socket::new(
+            domain,
+            socket2::Type::DGRAM,
+            Some(socket2::Protocol::UDP),
+        ).map_err(Error::Io)?;
+        
+        socket2_sock.set_nonblocking(true).map_err(Error::Io)?;
+        let _ = socket2_sock.set_recv_buffer_size(4 * 1024 * 1024);
+        let _ = socket2_sock.set_send_buffer_size(4 * 1024 * 1024);
+        
+        let any_addr: SocketAddr = if server_addr.is_ipv4() { "0.0.0.0:0".parse().unwrap() } else { "[::]:0".parse().unwrap() };
+        socket2_sock.bind(&any_addr.into()).map_err(Error::Io)?;
+        socket2_sock.connect(&server_addr.into()).map_err(Error::Io)?;
+        
+        let std_sock: std::net::UdpSocket = socket2_sock.into();
+        let socket = UdpSocket::from_std(std_sock).map_err(Error::Io)?;
+        
+        self.udp_socket = Some(Arc::new(socket));
+        info!("UDP transport connected to {}", server_addr);
+        Ok(())
+    }
+
+    /// Connect via TLS/TCP (DPI-invisible transport)
+    async fn connect_tls(&mut self, server_addr: SocketAddr) -> Result<()> {
+        use tokio_rustls::TlsConnector;
+        use tokio_rustls::rustls::{ClientConfig as RustlsConfig, RootCertStore};
+        use tokio_rustls::rustls::pki_types::ServerName;
+
+        info!("🔒 Establishing TLS connection to {}...", server_addr);
+
+        // Build TLS config
+        let tls_config = if self.config.tls_insecure {
+            // Accept any certificate (self-signed) — for testing
+            RustlsConfig::builder()
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(InsecureCertVerifier))
+                .with_no_client_auth()
+        } else {
+            // Use system root certificates
+            let mut root_store = RootCertStore::empty();
+            root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+            RustlsConfig::builder()
+                .with_root_certificates(root_store)
+                .with_no_client_auth()
+        };
+
+        let connector = TlsConnector::from(Arc::new(tls_config));
+        let tcp_stream = tokio::net::TcpStream::connect(server_addr).await.map_err(Error::Io)?;
+
+        // Set TCP_NODELAY for low latency
+        tcp_stream.set_nodelay(true).map_err(Error::Io)?;
+
+        // Use server IP as SNI (or "localhost" for self-signed)
+        let server_name = ServerName::try_from(server_addr.ip().to_string())
+            .unwrap_or_else(|_| ServerName::try_from("localhost".to_string()).unwrap());
+
+        let tls_stream = connector.connect(server_name, tcp_stream).await
+            .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::ConnectionRefused, format!("TLS handshake failed: {}", e))))?;
+
+        info!("🔒 TLS handshake complete!");
+
+        // Split TLS stream into reader and writer
+        let (tls_read, tls_write) = tokio::io::split(tls_stream);
+        self.tls_writer = Some(Arc::new(tokio::sync::Mutex::new(tls_write)));
+
+        // Spawn TLS reader that feeds packets into the same channel as UDP
+        // We'll store the reader handle and use it in run()
+        // For now, store the read half — run() will set up the loop
+        // We need to pass tls_read to run() — use a temporary field
+        // Actually... let's use the same channel pattern as UDP:
+        // spawn a task that reads from TLS and pushes Bytes into udp_to_tun_tx
+        // This way the main loop doesn't need to know about the transport.
+
+        // Store TLS reader in a Option that run() will take
+        // We'll use a simple approach: store it as a boxed field
+        self._tls_reader = Some(tls_read);
+
         Ok(())
     }
     
@@ -257,38 +355,81 @@ impl AivpnClient {
             }
         });
 
-        // Spawn UDP reader task
-        let udp_socket = self.udp_socket.as_ref().unwrap().clone();
+        // Spawn server reader task (UDP or TLS — transparent to rest of pipeline)
         let udp_to_tun_tx_clone = udp_to_tun_tx.clone();
         let shutdown_for_tasks = shutdown.clone();
-        let udp_task = tokio::spawn(async move {
-            let mut buf = vec![0u8; MAX_PACKET_SIZE];
-            let mut consecutive_errors: u32 = 0;
 
-            loop {
-                if shutdown_for_tasks.load(Ordering::SeqCst) {
-                    break;
-                }
+        let recv_task = if self.config.transport == TransportMode::Tls {
+            // TLS reader: decode length-framed packets from TLS stream
+            let mut tls_reader = self._tls_reader.take()
+                .ok_or(Error::Session("TLS reader not available".into()))?;
+            tokio::spawn(async move {
+                let mut decoder = aivpn_common::transport::FrameDecoder::new();
+                let mut buf = vec![0u8; 4096];
 
-                match udp_socket.recv(&mut buf).await {
-                    Ok(n) => {
-                        consecutive_errors = 0;
-                        if n > 0 {
-                            let _ = udp_to_tun_tx_clone.send(Bytes::copy_from_slice(&buf[..n])).await;
-                        }
+                loop {
+                    if shutdown_for_tasks.load(Ordering::SeqCst) {
+                        break;
                     }
-                    Err(e) => {
-                        consecutive_errors += 1;
-                        error!("UDP recv error: {}", e);
-                        if consecutive_errors >= 20 {
-                            // Socket is likely dead; let the main loop handle reconnect.
+
+                    match tls_reader.read(&mut buf).await {
+                        Ok(0) => {
+                            debug!("TLS connection closed by server");
                             break;
                         }
-                        tokio::time::sleep(Duration::from_millis(10)).await;
+                        Ok(n) => {
+                            decoder.push(&buf[..n]);
+                            loop {
+                                match decoder.next_packet() {
+                                    Ok(Some(packet)) => {
+                                        let _ = udp_to_tun_tx_clone.send(Bytes::copy_from_slice(&packet)).await;
+                                    }
+                                    Ok(None) => break,
+                                    Err(e) => {
+                                        warn!("TLS frame decode error: {}", e);
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            error!("TLS read error: {}", e);
+                            break;
+                        }
                     }
                 }
-            }
-        });
+            })
+        } else {
+            // UDP reader (original)
+            let udp_socket = self.udp_socket.as_ref().unwrap().clone();
+            tokio::spawn(async move {
+                let mut buf = vec![0u8; MAX_PACKET_SIZE];
+                let mut consecutive_errors: u32 = 0;
+
+                loop {
+                    if shutdown_for_tasks.load(Ordering::SeqCst) {
+                        break;
+                    }
+
+                    match udp_socket.recv(&mut buf).await {
+                        Ok(n) => {
+                            consecutive_errors = 0;
+                            if n > 0 {
+                                let _ = udp_to_tun_tx_clone.send(Bytes::copy_from_slice(&buf[..n])).await;
+                            }
+                        }
+                        Err(e) => {
+                            consecutive_errors += 1;
+                            error!("UDP recv error: {}", e);
+                            if consecutive_errors >= 20 {
+                                break;
+                            }
+                            tokio::time::sleep(Duration::from_millis(10)).await;
+                        }
+                    }
+                }
+            })
+        };
 
         // Spawn stats writer task
         let stats_shutdown = shutdown.clone();
@@ -315,7 +456,15 @@ impl AivpnClient {
         });
 
         // ── Spawn upload task using the shared pipeline ──
-        let upload_udp = self.udp_socket.as_ref().unwrap().clone();
+        // Build the transport sender (UDP or TLS)
+        let upload_sender: Box<dyn upload_pipeline::PacketSender> = if self.config.transport == TransportMode::Tls {
+            let tls_w = self.tls_writer.clone()
+                .ok_or(Error::Session("TLS writer not available".into()))?;
+            Box::new(TlsPacketSender { writer: tls_w })
+        } else {
+            let udp = self.udp_socket.as_ref().unwrap().clone();
+            Box::new(udp)
+        };
         let upload_keys = self.session_keys.clone()
             .ok_or(Error::Session("No session keys".into()))?;
         let upload_engine = self.mimicry_engine.take()
@@ -335,7 +484,7 @@ impl AivpnClient {
 
         let mut upload_task = tokio::spawn(Self::spawn_upload(
             tun_to_udp_rx,
-            upload_udp,
+            upload_sender,
             upload_engine,
             upload_state,
             upload_bytes_sent,
@@ -367,11 +516,11 @@ impl AivpnClient {
                     };
                 }
 
-                // UDP -> TUN (inbound traffic)
+                // Server -> TUN (inbound traffic)
                 res = udp_to_tun_rx.recv() => {
                     let packet = match res {
                         Some(p) => p,
-                        None => break Err(Error::Channel("UDP->TUN channel closed".into())),
+                        None => break Err(Error::Channel("Server->TUN channel closed".into())),
                     };
 
                     if let Err(e) = self.receive_and_write_packet_with_mdh(&packet, mdh_len).await {
@@ -389,9 +538,9 @@ impl AivpnClient {
 
         // Stop background tasks before disconnecting.
         tun_task.abort();
-        udp_task.abort();
+        recv_task.abort();
         let _ = tun_task.await;
-        let _ = udp_task.await;
+        let _ = recv_task.await;
 
         self.disconnect().await;
 
@@ -401,7 +550,7 @@ impl AivpnClient {
     /// Spawn the upload task using the shared pipeline.
     async fn spawn_upload(
         mut rx: mpsc::Receiver<Vec<u8>>,
-        udp: Arc<UdpSocket>,
+        sender: Box<dyn upload_pipeline::PacketSender>,
         engine: MimicryEngine,
         upload_state: Arc<Mutex<UploadCryptoState>>,
         bytes_sent: Arc<AtomicU64>,
@@ -443,7 +592,7 @@ impl AivpnClient {
             keepalive_interval: Duration::from_secs(15),
             ..Default::default()
         };
-        upload_pipeline::run_upload_loop(&mut rx, &udp, &mut enc, &config).await
+        upload_pipeline::run_upload_loop(&mut rx, sender.as_ref(), &mut enc, &config).await
     }
 
     /// Receive packet from server and write to TUN (using pre-computed mdh_len)
@@ -599,8 +748,7 @@ impl AivpnClient {
             Some(&obf),
         )?;
         
-        let socket = self.udp_socket.as_ref().unwrap();
-        socket.send(&aivpn_packet).await?;
+        self.send_packet(&aivpn_packet).await?;
         
         info!("Sent init handshake ({} bytes)", aivpn_packet.len());
         Ok(())
@@ -646,9 +794,25 @@ impl AivpnClient {
             )?
         };
 
-        let socket = self.udp_socket.as_ref().unwrap();
-        socket.send(&aivpn_packet).await?;
+        self.send_packet(&aivpn_packet).await?;
 
+        Ok(())
+    }
+
+    /// Send a raw AIVPN packet via the active transport (UDP or TLS)
+    async fn send_packet(&self, packet: &[u8]) -> Result<()> {
+        if let Some(ref tls_writer) = self.tls_writer {
+            // TLS: frame and send
+            let framed = aivpn_common::transport::frame_packet(packet);
+            let mut writer = tls_writer.lock().await;
+            writer.write_all(&framed).await.map_err(Error::Io)?;
+            writer.flush().await.map_err(Error::Io)?;
+        } else if let Some(ref socket) = self.udp_socket {
+            // UDP: send directly
+            socket.send(packet).await.map_err(Error::Io)?;
+        } else {
+            return Err(Error::Session("No transport available".into()));
+        }
         Ok(())
     }
     
@@ -684,5 +848,60 @@ impl Drop for AivpnClient {
     fn drop(&mut self) {
         // Zeroize sensitive data
         self.session_keys = None;
+    }
+}
+/// TLS packet sender — wraps packets in length-prefix frames before sending over TLS.
+struct TlsPacketSender {
+    writer: Arc<tokio::sync::Mutex<tokio::io::WriteHalf<tokio_rustls::client::TlsStream<tokio::net::TcpStream>>>>,
+}
+
+#[async_trait::async_trait]
+impl upload_pipeline::PacketSender for TlsPacketSender {
+    async fn send_packet(&self, data: &[u8]) -> std::result::Result<(), std::io::Error> {
+        let framed = aivpn_common::transport::frame_packet(data);
+        let mut writer = self.writer.lock().await;
+        writer.write_all(&framed).await?;
+        writer.flush().await
+    }
+}
+
+/// Certificate verifier that accepts any certificate (for self-signed testing)
+#[derive(Debug)]
+struct InsecureCertVerifier;
+
+impl tokio_rustls::rustls::client::danger::ServerCertVerifier for InsecureCertVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &tokio_rustls::rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[tokio_rustls::rustls::pki_types::CertificateDer<'_>],
+        _server_name: &tokio_rustls::rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: tokio_rustls::rustls::pki_types::UnixTime,
+    ) -> std::result::Result<tokio_rustls::rustls::client::danger::ServerCertVerified, tokio_rustls::rustls::Error> {
+        Ok(tokio_rustls::rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &tokio_rustls::rustls::pki_types::CertificateDer<'_>,
+        _dss: &tokio_rustls::rustls::DigitallySignedStruct,
+    ) -> std::result::Result<tokio_rustls::rustls::client::danger::HandshakeSignatureValid, tokio_rustls::rustls::Error> {
+        Ok(tokio_rustls::rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &tokio_rustls::rustls::pki_types::CertificateDer<'_>,
+        _dss: &tokio_rustls::rustls::DigitallySignedStruct,
+    ) -> std::result::Result<tokio_rustls::rustls::client::danger::HandshakeSignatureValid, tokio_rustls::rustls::Error> {
+        Ok(tokio_rustls::rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<tokio_rustls::rustls::SignatureScheme> {
+        tokio_rustls::rustls::crypto::ring::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
     }
 }

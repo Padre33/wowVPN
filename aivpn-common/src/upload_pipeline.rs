@@ -42,13 +42,23 @@ impl Default for UploadConfig {
 /// traffic-shaped padding, FSM updates). Android implements it via
 /// [`ZeroMdhEncryptor`] (fixed zero-length MDH, random padding).
 pub trait PacketEncryptor: Send {
-    /// Encrypt a TUN data payload into a ready-to-send UDP datagram.
+    /// Encrypt a TUN data payload into a ready-to-send datagram.
     fn encrypt_data(&mut self, payload: &[u8]) -> Result<Vec<u8>>;
-    /// Encrypt a keepalive control message into a ready-to-send UDP datagram.
+    /// Encrypt a keepalive control message into a ready-to-send datagram.
     fn encrypt_keepalive(&mut self) -> Result<Vec<u8>>;
     /// Called after a data datagram has been successfully sent.
     /// Use this for stats tracking, FSM transitions, etc.
     fn on_data_sent(&mut self, payload_len: usize);
+}
+
+/// Transport-agnostic packet sender.
+///
+/// Implemented for `Arc<UdpSocket>` (direct UDP send) and for TLS-framed
+/// writers so the upload loop works with any transport.
+#[async_trait::async_trait]
+pub trait PacketSender: Send + Sync {
+    /// Send a complete AIVPN packet to the server.
+    async fn send_packet(&self, data: &[u8]) -> std::result::Result<(), std::io::Error>;
 }
 
 // ──────────── Ready-made encryptor: zero MDH ────────────
@@ -99,14 +109,22 @@ fn is_transient_send_error(e: &std::io::Error) -> bool {
 /// Send helper that tolerates transient network errors (e.g. mid-switch on mobile).
 /// Returns Ok(()) on success or transient error (logged, packet dropped).
 /// Returns Err only on fatal errors (e.g. EBADF = socket closed).
-async fn send_tolerant(udp: &UdpSocket, data: &[u8]) -> Result<()> {
-    match udp.send(data).await {
+async fn send_tolerant(sender: &dyn PacketSender, data: &[u8]) -> Result<()> {
+    match sender.send_packet(data).await {
         Ok(_) => Ok(()),
         Err(e) if is_transient_send_error(&e) => {
             tracing::debug!("upload: transient send error (dropped packet): {e}");
             Ok(())
         }
         Err(e) => Err(Error::Io(e)),
+    }
+}
+
+/// `Arc<UdpSocket>` is a PacketSender — sends datagrams directly.
+#[async_trait::async_trait]
+impl PacketSender for Arc<UdpSocket> {
+    async fn send_packet(&self, data: &[u8]) -> std::result::Result<(), std::io::Error> {
+        self.send(data).await.map(|_| ())
     }
 }
 
@@ -118,7 +136,7 @@ async fn send_tolerant(udp: &UdpSocket, data: &[u8]) -> Result<()> {
 /// caller is expected to `.abort()` the task when the session ends.
 pub async fn run_upload_loop(
     rx: &mut mpsc::Receiver<Vec<u8>>,
-    udp: &Arc<UdpSocket>,
+    sender: &dyn PacketSender,
     enc: &mut impl PacketEncryptor,
     config: &UploadConfig,
 ) -> Result<()> {
@@ -134,11 +152,11 @@ pub async fn run_upload_loop(
             maybe_pkt = rx.recv() => {
                 let pkt_data = match maybe_pkt {
                     Some(p) => p,
-                    None => return Err(Error::Channel("TUN->UDP channel closed".into())),
+                    None => return Err(Error::Channel("TUN->upload channel closed".into())),
                 };
 
                 let encrypted = enc.encrypt_data(&pkt_data)?;
-                send_tolerant(udp, &encrypted).await?;
+                send_tolerant(sender, &encrypted).await?;
                 data_packet_count = data_packet_count.wrapping_add(1);
                 enc.on_data_sent(pkt_data.len());
 
@@ -147,13 +165,13 @@ pub async fn run_upload_loop(
                     match rx.try_recv() {
                         Ok(pkt) => {
                             let encrypted = enc.encrypt_data(&pkt)?;
-                            send_tolerant(udp, &encrypted).await?;
+                            send_tolerant(sender, &encrypted).await?;
                             data_packet_count = data_packet_count.wrapping_add(1);
                             enc.on_data_sent(pkt.len());
                         }
                         Err(mpsc::error::TryRecvError::Empty) => break,
                         Err(mpsc::error::TryRecvError::Disconnected) => {
-                            return Err(Error::Channel("TUN->UDP channel closed".into()));
+                            return Err(Error::Channel("TUN->upload channel closed".into()));
                         }
                     }
                 }
@@ -162,7 +180,7 @@ pub async fn run_upload_loop(
             // ── Keepalive (fires only when data path is idle) ──
             _ = ka_interval.tick() => {
                 let encrypted = enc.encrypt_keepalive()?;
-                send_tolerant(udp, &encrypted).await?;
+                send_tolerant(sender, &encrypted).await?;
             }
         }
     }

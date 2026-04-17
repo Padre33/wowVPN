@@ -13,6 +13,7 @@ import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.os.LocaleListCompat
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.switchmaterial.SwitchMaterial
+import org.json.JSONObject
 
 /**
  * Settings screen with 4 sections: Connection, Interface, Account, Support.
@@ -57,10 +58,94 @@ class SettingsActivity : AppCompatActivity() {
         switchNet.isChecked = SecureStorage.loadBoolean(this, "netshield")
         switchNet.setOnCheckedChangeListener { _, checked ->
             SecureStorage.saveBoolean(this, "netshield", checked)
+            // Auto-reconnect VPN so DNS change takes effect immediately
+            if (ShadeVpnService.isRunning) {
+                Toast.makeText(this,
+                    if (checked) "NetShield включён — переподключение..."
+                    else "NetShield выключен — переподключение...",
+                    Toast.LENGTH_SHORT).show()
+                // Parse active profile's connection key
+                val profiles = SecureStorage.loadProfiles(this)
+                val activeId = SecureStorage.loadActiveProfileId(this)
+                val active = profiles.find { it.id == activeId } ?: profiles.firstOrNull()
+                val key = active?.key ?: return@setOnCheckedChangeListener
+                val payload = key.trim().let {
+                    when {
+                        it.startsWith("shade://") -> it.removePrefix("shade://")
+                        it.startsWith("aivpn://") -> it.removePrefix("aivpn://")
+                        else -> it
+                    }
+                }
+                try {
+                    val jsonBytes = android.util.Base64.decode(payload,
+                        android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP)
+                    val json = org.json.JSONObject(String(jsonBytes))
+                    val intent = Intent(this, ShadeVpnService::class.java).apply {
+                        action = ShadeVpnService.ACTION_CONNECT
+                        putExtra("server", json.getString("s"))
+                        putExtra("server_key", json.getString("k"))
+                        putExtra("psk", json.getString("p"))
+                        putExtra("vpn_ip", json.getString("i"))
+                    }
+                    startForegroundService(intent)
+                } catch (_: Exception) { }
+            }
         }
 
         findViewById<MaterialCardView>(R.id.cardSplitTunnel).setOnClickListener {
             startActivity(Intent(this, SplitTunnelActivity::class.java))
+        }
+
+        // Protocol selector (UDP / TLS)
+        val textProtocol = findViewById<TextView>(R.id.textCurrentProtocol)
+        val currentTransport = SecureStorage.loadString(this, "transport_mode", "udp")
+        textProtocol?.text = if (currentTransport == "tls") "TLS (Anti-DPI)" else "UDP"
+
+        findViewById<MaterialCardView>(R.id.cardProtocol)?.setOnClickListener {
+            val options = arrayOf("UDP (стандарт)", "TLS (обход блокировок)")
+            val currentIdx = if (SecureStorage.loadString(this, "transport_mode", "udp") == "tls") 1 else 0
+
+            AlertDialog.Builder(this, R.style.Theme_ShadeVPN_Dialog)
+                .setTitle("Протокол подключения")
+                .setSingleChoiceItems(options, currentIdx) { dialog, which ->
+                    val mode = if (which == 1) "tls" else "udp"
+                    SecureStorage.saveString(this, "transport_mode", mode)
+                    textProtocol?.text = if (mode == "tls") "TLS (Anti-DPI)" else "UDP"
+                    dialog.dismiss()
+
+                    // Auto-reconnect if VPN is running
+                    if (ShadeVpnService.isRunning) {
+                        Toast.makeText(this,
+                            "Протокол изменён — переподключение...",
+                            Toast.LENGTH_SHORT).show()
+                        val profiles = SecureStorage.loadProfiles(this)
+                        val activeId = SecureStorage.loadActiveProfileId(this)
+                        val active = profiles.find { it.id == activeId } ?: profiles.firstOrNull()
+                        val key = active?.key ?: return@setSingleChoiceItems
+                        val payload = key.trim().let {
+                            when {
+                                it.startsWith("shade://") -> it.removePrefix("shade://")
+                                it.startsWith("aivpn://") -> it.removePrefix("aivpn://")
+                                else -> it
+                            }
+                        }
+                        try {
+                            val jsonBytes = android.util.Base64.decode(payload,
+                                android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP)
+                            val json = org.json.JSONObject(String(jsonBytes))
+                            val intent = Intent(this, ShadeVpnService::class.java).apply {
+                                action = ShadeVpnService.ACTION_CONNECT
+                                putExtra("server", json.getString("s"))
+                                putExtra("server_key", json.getString("k"))
+                                putExtra("psk", json.getString("p"))
+                                putExtra("vpn_ip", json.getString("i"))
+                            }
+                            startForegroundService(intent)
+                        } catch (_: Exception) { }
+                    }
+                }
+                .setNegativeButton("Отмена", null)
+                .show()
         }
 
         // ── Interface ──

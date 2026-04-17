@@ -18,10 +18,12 @@ object AivpnJni {
     external fun runTunnel(
         vpnService: VpnService,
         tunFd: Int,
+        tcpFd: Int,
         serverHost: String,
         serverPort: Int,
         serverKey: ByteArray,
         psk: ByteArray?,
+        transport: String,
     ): String
 
     @JvmStatic

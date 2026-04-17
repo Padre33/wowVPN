@@ -13,8 +13,9 @@ use std::time::{Duration, Instant};
 
 use jni::objects::GlobalRef;
 use jni::JavaVM;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::io::unix::AsyncFd;
-use tokio::net::UdpSocket;
+use tokio::net::{TcpStream, UdpSocket};
 use tokio::sync::mpsc;
 use tokio::time;
 
@@ -49,6 +50,7 @@ const CHANNEL_SIZE: usize = 8192;
 
 pub struct SessionRuntime {
     udp_fd: AtomicI32,
+    tcp_fd: AtomicI32,
     upload_bytes: AtomicU64,
     download_bytes: AtomicU64,
 }
@@ -57,6 +59,7 @@ impl SessionRuntime {
     fn new() -> Self {
         Self {
             udp_fd: AtomicI32::new(-1),
+            tcp_fd: AtomicI32::new(-1),
             upload_bytes: AtomicU64::new(0),
             download_bytes: AtomicU64::new(0),
         }
@@ -97,14 +100,22 @@ fn activate_session(session: Arc<SessionRuntime>) -> Result<ActiveSessionGuard> 
 }
 
 pub fn stop_active_tunnel() {
-    let fd = ACTIVE_SESSION
-        .lock()
-        .ok()
-        .and_then(|guard| guard.as_ref().map(|s| s.udp_fd.swap(-1, Ordering::SeqCst)))
-        .unwrap_or(-1);
+    let mut udp_fd = -1;
+    let mut tcp_fd = -1;
+    if let Ok(mut guard) = ACTIVE_SESSION.lock() {
+        if let Some(session) = guard.take() {
+            udp_fd = session.udp_fd.swap(-1, Ordering::SeqCst);
+            tcp_fd = session.tcp_fd.swap(-1, Ordering::SeqCst);
+        }
+    }
 
-    if fd >= 0 {
-        unsafe { libc::close(fd) };
+    // Use shutdown instead of close! libc::close on Tokio monitored fds causes
+    // fatal epoll panics crashes. Shutdown forces read/write to return EOF/ERR gracefully.
+    if udp_fd >= 0 {
+        unsafe { libc::shutdown(udp_fd, libc::SHUT_RDWR) };
+    }
+    if tcp_fd >= 0 {
+        unsafe { libc::shutdown(tcp_fd, libc::SHUT_RDWR) };
     }
 }
 
@@ -133,11 +144,21 @@ pub async fn run_tunnel_android(
     vm: JavaVM,
     vpn_service: GlobalRef,
     tun_fd_int: RawFd,
+    tcp_fd: RawFd,
     server_host: String,
     server_port: u16,
     server_key: [u8; 32],
     psk: Option<[u8; 32]>,
+    transport: String,
 ) -> Result<()> {
+    // ── 1. IMMEDIATE LIFETIME BINDING ──
+    // Wrap tun_fd_int immediately so that if ANY error occurs during setup, the tun_fd is dropped
+    // and the VPN interface is torn down by the Android kernel! Otherwise the routing table freezes with ECONNABORTED.
+    unsafe { libc::fcntl(tun_fd_int, libc::F_SETFL, libc::O_NONBLOCK) };
+    let owned_tun = unsafe { std::os::unix::io::OwnedFd::from_raw_fd(tun_fd_int) };
+
+    let use_tls = transport == "tls";
+    log::info!("aivpn: transport mode = {}", if use_tls { "TLS" } else { "UDP" });
     let session = Arc::new(SessionRuntime::new());
     let _active_session_guard = activate_session(session.clone())?;
 
@@ -157,10 +178,6 @@ pub async fn run_tunnel_android(
 
     let raw_udp_fd = create_protected_udp_socket(&vm, &vpn_service, dest, &session)?;
 
-    // ── 3. Set TUN fd to non-blocking for AsyncFd ──
-    unsafe { libc::fcntl(tun_fd_int, libc::F_SETFL, libc::O_NONBLOCK) };
-    // SAFETY: we own this fd (Kotlin called detachFd()).
-    let owned_tun = unsafe { OwnedFd::from_raw_fd(tun_fd_int) };
     let tun = AsyncFd::new(owned_tun)?;
 
     // Convert the raw UDP fd to a tokio UdpSocket (already connected to server).
@@ -185,6 +202,18 @@ pub async fn run_tunnel_android(
     };
 
     let init_pkt = send_handshake(&keys, &mut send_counter, &mut send_seq)?;
+
+    // ── Transport-specific connection ──
+    if use_tls {
+        // TLS path
+        return run_tls_tunnel(
+            vm, vpn_service, tun, tcp_fd, server_host.clone(),
+            keys, keypair, dh, psk, obf_pub.to_vec(), keepalive.clone(),
+            init_pkt, send_counter, send_seq, session,
+        ).await;
+    }
+
+    // UDP path (original)
     udp.send(&init_pkt).await?;
 
     // ── 5. Wait for ServerHello with timeout ──
@@ -618,6 +647,396 @@ async fn tun_async_write(tun: &AsyncFd<OwnedFd>, data: &[u8]) -> std::io::Result
             }
             Err(_would_block) => continue,
         }
+    }
+    Ok(())
+}
+
+// ──────────── TLS tunnel ────────────
+
+/// Certificate verifier that accepts any certificate (self-signed testing).
+#[derive(Debug)]
+struct InsecureCertVerifier;
+
+impl tokio_rustls::rustls::client::danger::ServerCertVerifier for InsecureCertVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &tokio_rustls::rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[tokio_rustls::rustls::pki_types::CertificateDer<'_>],
+        _server_name: &tokio_rustls::rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: tokio_rustls::rustls::pki_types::UnixTime,
+    ) -> std::result::Result<tokio_rustls::rustls::client::danger::ServerCertVerified, tokio_rustls::rustls::Error> {
+        Ok(tokio_rustls::rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &tokio_rustls::rustls::pki_types::CertificateDer<'_>,
+        _dss: &tokio_rustls::rustls::DigitallySignedStruct,
+    ) -> std::result::Result<tokio_rustls::rustls::client::danger::HandshakeSignatureValid, tokio_rustls::rustls::Error> {
+        Ok(tokio_rustls::rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &tokio_rustls::rustls::pki_types::CertificateDer<'_>,
+        _dss: &tokio_rustls::rustls::DigitallySignedStruct,
+    ) -> std::result::Result<tokio_rustls::rustls::client::danger::HandshakeSignatureValid, tokio_rustls::rustls::Error> {
+        Ok(tokio_rustls::rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<tokio_rustls::rustls::SignatureScheme> {
+        tokio_rustls::rustls::crypto::ring::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
+/// TLS packet sender for the upload pipeline.
+struct TlsPacketSender {
+    writer: Arc<tokio::sync::Mutex<tokio::io::WriteHalf<tokio_rustls::client::TlsStream<TcpStream>>>>,
+}
+
+#[async_trait::async_trait]
+impl upload_pipeline::PacketSender for TlsPacketSender {
+    async fn send_packet(&self, data: &[u8]) -> std::io::Result<()> {
+        let framed = aivpn_common::transport::frame_packet(data);
+        let mut writer = self.writer.lock().await;
+        writer.write_all(&framed).await?;
+        writer.flush().await
+    }
+}
+
+/// Full TLS tunnel session (parallel to the UDP path in run_tunnel_android).
+#[allow(clippy::too_many_arguments)]
+async fn run_tls_tunnel(
+    vm: JavaVM,
+    vpn_service: GlobalRef,
+    tun: AsyncFd<OwnedFd>,
+    tcp_fd: RawFd,
+    server_host: String,
+    mut keys: SessionKeys,
+    keypair: KeyPair,
+    dh: [u8; 32],
+    psk: Option<[u8; 32]>,
+    obf_pub: Vec<u8>,  // already converted from [u8; 32]
+    keepalive: Vec<u8>,
+    init_pkt: Vec<u8>,
+    mut send_counter: u64,
+    mut send_seq: u16,
+    session: Arc<SessionRuntime>,
+) -> Result<()> {
+    // ── 1. TLS connect using Framework-Handoff fd ──
+    if tcp_fd < 0 {
+        return Err(Error::Session("TCP file descriptor not provided by Kotlin framework".into()));
+    }
+    
+    // Convert the raw fd from Kotlin into an OwnedFd (ensuring it is closed on drop)
+    let owned_tcp = unsafe { std::os::unix::io::OwnedFd::from_raw_fd(tcp_fd) };
+    
+    // Convert to strict non-blocking mode required by Tokio
+    unsafe { libc::fcntl(tcp_fd, libc::F_SETFL, libc::O_NONBLOCK) };
+
+    // Convert to Tokio TcpStream immediately (Already bound and connected by Android API!)
+    let std_stream = std::net::TcpStream::from(owned_tcp);
+    let tcp_stream = tokio::net::TcpStream::from_std(std_stream)
+        .map_err(|e| Error::Session(format!("Failed to wrap Android Java socket: {}", e)))?;
+
+    session.tcp_fd.store(tcp_fd, Ordering::SeqCst);
+    log::info!("aivpn: Taking over Android Java TCP socket for TLS");
+
+    let mut tls_config = tokio_rustls::rustls::ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(InsecureCertVerifier))
+        .with_no_client_auth();
+    tls_config.alpn_protocols = vec![b"h2".to_vec()];
+
+    let server_name = tokio_rustls::rustls::pki_types::ServerName::try_from(server_host.clone())
+        .unwrap_or(tokio_rustls::rustls::pki_types::ServerName::IpAddress(
+            server_host.parse::<std::net::IpAddr>()
+                .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::new(0,0,0,0)))
+                .into()
+        ));
+
+    let connector = tokio_rustls::TlsConnector::from(Arc::new(tls_config));
+    let tls_stream = connector.connect(server_name, tcp_stream).await
+        .map_err(|e| Error::Session(format!("Step 6 TLS handshake failed: {}", e)))?;
+
+    log::info!("aivpn: TLS handshake complete");
+
+    let (tls_reader, tls_writer) = tokio::io::split(tls_stream);
+    let tls_writer = Arc::new(tokio::sync::Mutex::new(tls_writer));
+
+    // ── 2. Send init handshake via TLS ──
+    {
+        let framed = aivpn_common::transport::frame_packet(&init_pkt);
+        let mut w = tls_writer.lock().await;
+        w.write_all(&framed).await.map_err(Error::Io)?;
+        w.flush().await.map_err(Error::Io)?;
+    }
+
+    // ── 3. Wait for ServerHello via TLS ──
+    let mut decoder = aivpn_common::transport::FrameDecoder::new();
+    let mut tls_reader = tls_reader;
+    let mut temp_buf = vec![0u8; BUF_SIZE];
+
+    let server_hello_data = {
+        let deadline = Instant::now() + HANDSHAKE_TIMEOUT;
+        let mut retry_interval = time::interval(HANDSHAKE_RETRY_INTERVAL);
+        retry_interval.tick().await;
+
+        loop {
+            if Instant::now() >= deadline {
+                return Err(Error::Session("TLS handshake timeout (10 s)".into()));
+            }
+
+            tokio::select! {
+                res = tls_reader.read(&mut temp_buf) => {
+                    let n = res.map_err(Error::Io)?;
+                    if n == 0 {
+                        return Err(Error::Session("TLS connection closed during handshake".into()));
+                    }
+                    decoder.push(&temp_buf[..n]);
+                    if let Some(pkt) = decoder.next_packet()? {
+                        break pkt;
+                    }
+                }
+                _ = retry_interval.tick() => {
+                    let keepalive_inner = build_inner_packet(InnerType::Control, send_seq, &keepalive);
+                    send_seq = send_seq.wrapping_add(1);
+                    let obf_arr: [u8; 32] = obf_pub.clone().try_into().unwrap();
+                    let retry_pkt = build_zero_mdh_packet(&keys, &mut send_counter, &keepalive_inner, Some(&obf_arr))?;
+                    let framed = aivpn_common::transport::frame_packet(&retry_pkt);
+                    let mut w = tls_writer.lock().await;
+                    w.write_all(&framed).await.map_err(Error::Io)?;
+                    w.flush().await.map_err(Error::Io)?;
+                }
+            }
+        }
+    };
+
+    let mut recv_win = RecvWindow::new();
+    process_server_hello_with_mdh_len(
+        &server_hello_data,
+        &mut keys,
+        &keypair,
+        &mut recv_win,
+        &mut send_counter,
+        DEFAULT_ZERO_MDH.len(),
+    )?;
+    let mut transition_recv_keys: Option<SessionKeys> = Some(derive_session_keys(
+        &dh, psk.as_ref(), &keypair.public_key_bytes(),
+    ));
+    let mut transition_recv_deadline = Some(Instant::now() + Duration::from_secs(2));
+    let mut transition_recv_win = std::mem::take(&mut recv_win);
+    notify_tunnel_ready(&vm, &vpn_service, &server_host);
+    log::info!("aivpn: TLS handshake + PFS ratchet complete");
+
+    // ── 4. Main forwarding loop ──
+    let mut last_rx = Instant::now();
+    let mut upload_at_last_rx = session.upload_bytes.load(Ordering::Relaxed);
+
+    let (tun_tx, mut tun_rx) = mpsc::channel::<Vec<u8>>(CHANNEL_SIZE);
+    let (err_tx, mut err_rx) = mpsc::channel::<String>(16);
+    let tun_err_tx = err_tx.clone();
+    let sender_err_tx = err_tx.clone();
+
+    let read_fd = unsafe { libc::dup(tun.as_raw_fd()) };
+    if read_fd < 0 {
+        return Err(Error::Io(std::io::Error::last_os_error()));
+    }
+    let owned_tun_read = unsafe { OwnedFd::from_raw_fd(read_fd) };
+    let tun_read = AsyncFd::new(owned_tun_read)?;
+
+    // TUN reader task (same as UDP path)
+    let tun_reader_task = tokio::spawn(async move {
+        let mut tun_buf = vec![0u8; BUF_SIZE];
+        loop {
+            match tun_async_read(&tun_read, &mut tun_buf).await {
+                Ok(n) => {
+                    if n == 0 || tun_buf[0] >> 4 != 4 { continue; }
+                    if tun_tx.send(tun_buf[..n].to_vec()).await.is_err() { break; }
+                }
+                Err(e) => {
+                    let _ = tun_err_tx.send(format!("TUN read failed: {e}")).await;
+                    break;
+                }
+            }
+        }
+    });
+
+    // Upload sender task via TLS
+    let keys_tx = keys.clone();
+    let session_for_upload = session.clone();
+    let tls_writer_upload = tls_writer.clone();
+    let upload_sender_task = tokio::spawn(async move {
+        struct AndroidEncryptor {
+            inner: ZeroMdhEncryptor,
+            session: Arc<SessionRuntime>,
+        }
+        impl PacketEncryptor for AndroidEncryptor {
+            fn encrypt_data(&mut self, payload: &[u8]) -> aivpn_common::error::Result<Vec<u8>> {
+                self.inner.encrypt_data(payload)
+            }
+            fn encrypt_keepalive(&mut self) -> aivpn_common::error::Result<Vec<u8>> {
+                self.inner.encrypt_keepalive()
+            }
+            fn on_data_sent(&mut self, payload_len: usize) {
+                self.session.upload_bytes.fetch_add(payload_len as u64, Ordering::Relaxed);
+            }
+        }
+        let mut enc = AndroidEncryptor {
+            inner: ZeroMdhEncryptor::new(keys_tx, send_counter, send_seq),
+            session: session_for_upload,
+        };
+        let config = UploadConfig {
+            keepalive_interval: KEEPALIVE_INTERVAL,
+            ..Default::default()
+        };
+        let sender = TlsPacketSender { writer: tls_writer_upload };
+
+        if let Err(e) = upload_pipeline::run_upload_loop(&mut tun_rx, &sender, &mut enc, &config).await {
+            let _ = sender_err_tx.send(format!("Upload pipeline: {e}")).await;
+        }
+    });
+
+    // TLS reader task (download from server)
+    let (srv_tx, mut srv_rx) = mpsc::channel::<Vec<u8>>(CHANNEL_SIZE);
+    let tls_reader_err_tx = err_tx.clone();
+    let tls_reader_task = tokio::spawn(async move {
+        let mut decoder = aivpn_common::transport::FrameDecoder::new();
+        let mut buf = vec![0u8; BUF_SIZE];
+        let mut reader = tls_reader;
+        loop {
+            match reader.read(&mut buf).await {
+                Ok(0) => {
+                    let _ = tls_reader_err_tx.send("TLS connection closed".into()).await;
+                    break;
+                }
+                Ok(n) => {
+                    decoder.push(&buf[..n]);
+                    while let Ok(Some(pkt)) = decoder.next_packet() {
+                        if srv_tx.send(pkt).await.is_err() { return; }
+                    }
+                }
+                Err(e) => {
+                    let _ = tls_reader_err_tx.send(format!("TLS read: {e}")).await;
+                    break;
+                }
+            }
+        }
+    });
+
+    let rekey_sleep = time::sleep(REKEY_INTERVAL);
+    tokio::pin!(rekey_sleep);
+    let mut rx_check = time::interval(RX_CHECK_INTERVAL);
+    rx_check.set_missed_tick_behavior(time::MissedTickBehavior::Delay);
+
+    loop {
+        tokio::select! {
+            biased;
+
+            _ = &mut rekey_sleep => {
+                log::info!("aivpn: rekey interval — signalling reconnect");
+                tun_reader_task.abort();
+                upload_sender_task.abort();
+                tls_reader_task.abort();
+                return Ok(());
+            }
+
+            // Server -> TUN (via TLS)
+            r = srv_rx.recv() => {
+                let packet = match r {
+                    Some(p) => p,
+                    None => {
+                        tun_reader_task.abort();
+                        upload_sender_task.abort();
+                        return Err(Error::Session("TLS server channel closed".into()));
+                    }
+                };
+                last_rx = Instant::now();
+                upload_at_last_rx = session.upload_bytes.load(Ordering::Relaxed);
+
+                if transition_recv_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                    transition_recv_keys = None;
+                    transition_recv_deadline = None;
+                    transition_recv_win.reset();
+                }
+
+                let decoded = match decode_packet_with_mdh_len(
+                    &packet, &keys, &mut recv_win, DEFAULT_ZERO_MDH.len(),
+                ) {
+                    Ok(d) => Some(d),
+                    Err(_) => {
+                        if let Some(fk) = transition_recv_keys.as_ref() {
+                            decode_packet_with_mdh_len(
+                                &packet, fk, &mut transition_recv_win, DEFAULT_ZERO_MDH.len(),
+                            ).ok()
+                        } else { None }
+                    }
+                };
+
+                if let Some(decoded) = decoded {
+                    if decoded.header.inner_type == InnerType::Data && !decoded.payload.is_empty() {
+                        tun_async_write(&tun, &decoded.payload).await?;
+                        session.download_bytes.fetch_add(decoded.payload.len() as u64, Ordering::Relaxed);
+                    }
+                }
+            }
+
+            maybe_err = err_rx.recv() => {
+                if let Some(msg) = maybe_err {
+                    tun_reader_task.abort();
+                    upload_sender_task.abort();
+                    tls_reader_task.abort();
+                    return Err(Error::Session(msg));
+                }
+            }
+
+            _ = rx_check.tick() => {
+                let silence = last_rx.elapsed();
+                let uploaded_total = session.upload_bytes.load(Ordering::Relaxed);
+                let uploaded_since_rx = uploaded_total.saturating_sub(upload_at_last_rx);
+
+                if silence > TX_WITHOUT_RX_TIMEOUT && uploaded_since_rx >= TX_WITHOUT_RX_MIN_BYTES {
+                    tun_reader_task.abort();
+                    upload_sender_task.abort();
+                    tls_reader_task.abort();
+                    return Err(Error::Session(
+                        format!("TX without RX: {} bytes in {:?} — reconnecting", uploaded_since_rx, silence)
+                    ));
+                }
+
+                if silence > RX_SILENCE {
+                    tun_reader_task.abort();
+                    upload_sender_task.abort();
+                    tls_reader_task.abort();
+                    return Err(Error::Session(
+                        format!("No RX for {:?} — reconnecting", silence)
+                    ));
+                }
+            }
+        }
+    }
+}
+
+/// Protect a file descriptor via JNI VpnService.protect()
+fn protect_fd(vm: &JavaVM, vpn_service: &GlobalRef, fd: RawFd) -> Result<()> {
+    let mut env = vm.attach_current_thread()
+        .map_err(|e| Error::Session(format!("JNI attach: {e}")))?;
+    let protected = env.call_method(
+        vpn_service,
+        "protect",
+        "(I)Z",
+        &[jni::objects::JValue::Int(fd)],
+    )
+    .and_then(|v| v.z())
+    .unwrap_or(false);
+
+    if !protected {
+        return Err(Error::Session("VpnService.protect() returned false for raw fd".into()));
     }
     Ok(())
 }

@@ -24,6 +24,9 @@ pub mod key_rotation;
 pub mod passive_distribution;
 pub mod metrics;
 
+// TLS transport (DPI bypass)
+pub mod tls_bridge;
+
 pub use server::AivpnServer;
 pub use server::ServerArgs;
 pub use gateway::{Gateway, GatewayConfig};
@@ -36,3 +39,4 @@ pub use neural::{NeuralResonanceModule, NeuralConfig, ResonanceStatus, Resonance
 pub use key_rotation::{KeyRotator, KeyRotationConfig};
 pub use passive_distribution::{PassiveMaskReceiver, PassiveDistributionConfig};
 pub use metrics::MetricsCollector;
+pub use tls_bridge::{TlsBridge, TlsBridgeConfig};

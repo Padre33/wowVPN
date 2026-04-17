@@ -8,6 +8,7 @@ pub mod client_wire;
 pub mod protocol;
 pub mod mask;
 pub mod error;
+pub mod transport;
 
 #[cfg(feature = "client-upload")]
 pub mod upload_pipeline;

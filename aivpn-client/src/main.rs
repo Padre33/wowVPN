@@ -42,6 +42,14 @@ pub struct ClientArgs {
     /// Config file path (JSON)
     #[arg(long)]
     pub config: Option<String>,
+
+    /// Transport mode: "udp" (default) or "tls"
+    #[arg(long, default_value = "udp")]
+    pub transport: String,
+
+    /// Accept self-signed TLS certificates (for testing)
+    #[arg(long, default_value_t = false)]
+    pub tls_insecure: bool,
 }
 
 // Global shutdown flag
@@ -164,6 +172,11 @@ async fn main() {
             preshared_key,
             initial_mask: webrtc_zoom_v3(),
             server_signing_pub: None,
+            transport: match args.transport.as_str() {
+                "tls" => aivpn_client::client::TransportMode::Tls,
+                _ => aivpn_client::client::TransportMode::Udp,
+            },
+            tls_insecure: args.tls_insecure,
             tun_config: TunnelConfig {
                 tun_name: tun_name.clone(),
                 tun_addr: tun_addr.clone(),
