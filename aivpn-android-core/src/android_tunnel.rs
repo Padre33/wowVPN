@@ -169,7 +169,8 @@ pub async fn run_tunnel_android(
 
     // ── 2. Create and protect UDP socket ──
     // Resolve host (async DNS so we don't block the tokio thread).
-    let dest_str = format!("{}:{}", server_host, server_port);
+    let actual_port = if transport == "quic" { 443 } else { server_port };
+    let dest_str = format!("{}:{}", server_host, actual_port);
     let dest: SocketAddr = tokio::net::lookup_host(&dest_str)
         .await
         .map_err(|e| Error::Io(e))?
