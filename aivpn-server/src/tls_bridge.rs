@@ -135,7 +135,7 @@ async fn handle_tls_client(
     let udp_send = udp_socket.clone();
     let tls_to_udp = tokio::spawn(async move {
         let mut decoder = FrameDecoder::new();
-        let mut buf = vec![0u8; 4096];
+        let mut buf = vec![0u8; 65536]; // Large buffer for burst reads
 
         loop {
             let n = match tls_reader.read(&mut buf).await {
@@ -172,9 +172,12 @@ async fn handle_tls_client(
     });
 
     // Task 2: UDP → TLS (gateway sends responses → forward to client)
+    // NOTE: TCP_NODELAY is set on the stream, so writes go out immediately
+    // without explicit flush. Per-packet flush() was killing throughput.
     let udp_recv = udp_socket.clone();
     let udp_to_tls = tokio::spawn(async move {
-        let mut buf = vec![0u8; 2048];
+        let mut buf = vec![0u8; 8192]; // Enough for any VPN packet (MTU 1420 + overhead)
+        let mut pending_writes: u32 = 0;
 
         loop {
             let n = match udp_recv.recv(&mut buf).await {
@@ -191,10 +194,15 @@ async fn handle_tls_client(
                 debug!("TLS write error: {}", e);
                 break;
             }
-            // Flush to prevent buffering delays
-            if let Err(e) = tls_writer.flush().await {
-                debug!("TLS flush error: {}", e);
-                break;
+            // Flush every 8 packets or if no more immediately available
+            // TCP_NODELAY ensures small writes don't get stuck in Nagle buffer
+            pending_writes += 1;
+            if pending_writes >= 8 {
+                if let Err(e) = tls_writer.flush().await {
+                    debug!("TLS flush error: {}", e);
+                    break;
+                }
+                pending_writes = 0;
             }
         }
     });
