@@ -232,10 +232,13 @@ pub fn load_tls_config(cert_path: &str, key_path: &str) -> io::Result<ServerConf
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "No private key found in key file"))?;
 
     // Build TLS 1.3 config (most secure, best performance)
-    let config = ServerConfig::builder()
+    let mut config = ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(certs, key)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("TLS config error: {}", e)))?;
+
+    // Add ALPN protocols for DPI masking. We support "h3" (QUIC) and "h2" (TLS).
+    config.alpn_protocols = vec![b"h3".to_vec(), b"h2".to_vec()];
 
     Ok(config)
 }
