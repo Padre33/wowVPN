@@ -1348,11 +1348,8 @@ impl Gateway {
                 warn!("Unexpected MASK_UPDATE from client");
             }
             ControlPayload::Keepalive => {
-                debug!("Keepalive from {}", hash_addr(&client_addr));
+                info!("Keepalive from {} — sending ACK", hash_addr(&client_addr));
                 if !session.lock().is_ratcheted {
-                    // The client is still retrying the initial handshake. If the
-                    // first ServerHello was lost, replying with a normal pre-ratchet
-                    // ControlAck leaves the client stuck forever.
                     self.send_server_hello(session, client_addr).await?;
                     return Ok(());
                 }
