@@ -210,7 +210,7 @@ async fn handle_tls_client(
 }
 
 /// Load TLS server config from certificate and key files
-fn load_tls_config(cert_path: &str, key_path: &str) -> io::Result<ServerConfig> {
+pub fn load_tls_config(cert_path: &str, key_path: &str) -> io::Result<ServerConfig> {
     // Read certificate chain
     let cert_file = std::fs::File::open(cert_path)
         .map_err(|e| io::Error::new(io::ErrorKind::NotFound, format!("Cannot open cert '{}': {}", cert_path, e)))?;

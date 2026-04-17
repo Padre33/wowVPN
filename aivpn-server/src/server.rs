@@ -58,7 +58,7 @@ pub struct ServerArgs {
     #[arg(long, env = "AIVPN_PER_IP_PPS_LIMIT", default_value_t = 50000)]
     pub per_ip_pps_limit: u64,
 
-    /// Transport mode: "udp" (default), "tls", or "both"
+    /// Transport mode: "udp" (default), "tls", "quic", or "all"
     #[arg(long, default_value = "udp", env = "SHADEVPN_TRANSPORT")]
     pub transport: String,
 
@@ -73,6 +73,10 @@ pub struct ServerArgs {
     /// TLS listen address (default: same as --listen but TCP)
     #[arg(long, default_value = "0.0.0.0:443", env = "SHADEVPN_TLS_LISTEN")]
     pub tls_listen: String,
+
+    /// QUIC listen address (default: same as --listen but QUIC UDP)
+    #[arg(long, default_value = "0.0.0.0:443", env = "SHADEVPN_QUIC_LISTEN")]
+    pub quic_listen: String,
 }
 
 /// AIVPN Server instance

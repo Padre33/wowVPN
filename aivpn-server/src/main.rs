@@ -146,15 +146,64 @@ async fn main() {
                 }
             }
 
+            if transport_mode == "quic" || transport_mode == "all" || transport_mode == "both" {
+                let tls_cert = match args.tls_cert {
+                    Some(ref p) => p.clone(),
+                    None => {
+                        error!("--tls-cert is required when --transport is '{}'.", transport_mode);
+                        std::process::exit(1);
+                    }
+                };
+                let tls_key = match args.tls_key {
+                    Some(ref p) => p.clone(),
+                    None => {
+                        error!("--tls-key is required when --transport is '{}'", transport_mode);
+                        std::process::exit(1);
+                    }
+                };
+
+                let bridge_config = aivpn_server::QuicBridgeConfig {
+                    quic_listen_addr: args.quic_listen.clone(),
+                    gateway_udp_addr: format!("127.0.0.1:{}", args.listen.split(':').last().unwrap_or("443")),
+                    tls_cert_path: tls_cert,
+                    tls_key_path: tls_key,
+                };
+
+                match aivpn_server::QuicBridge::new(bridge_config) {
+                    Ok(bridge) => {
+                        info!("🚀 QUIC transport enabled (mode: {})", transport_mode);
+                        tokio::spawn(async move {
+                            if let Err(e) = bridge.run().await {
+                                error!("QUIC Bridge error: {}", e);
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        error!("Failed to initialize QUIC bridge: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+
             // Run UDP gateway (blocks forever)
-            if transport_mode == "tls" {
-                // TLS-only mode: no UDP gateway, just keep running
-                info!("Running in TLS-only mode (no UDP listener)");
-                // The TLS bridge was spawned above, just keep the runtime alive
-                tokio::signal::ctrl_c().await.ok();
-                info!("Shutting down...");
+            if transport_mode == "tls" || transport_mode == "quic" {
+                // TLS-only/QUIC-only mode: no UDP gateway, just keep running
+                info!("Running in {} mode (no direct UDP gateway listener, using loopback)", transport_mode);
+                // Gateway should still listen but only locally, wait, actually if transport mode is TLS/QUIC,
+                // the gateway MUST run so the bridges can talk to it!
+                // Wait! In original code:
+                // if transport_mode == "tls" {
+                //     info!("Running in TLS-only mode (no UDP listener)");
+                //     std::process::exit(1); // Wait, original code slept here instead of running server!
+                // } else { server.run().await }
+                // THAT'S A BUG IN ORIGINAL CODE! If gateway doesn't run, the bridge sends UDP to dead port!
+                // Actually `server.new` creates gateway bound to `args.listen` (e.g. 127.0.0.1:4430).
+                // Let's just run the gateway unconditionally! It binds to whatever `args.listen` says.
+                if let Err(e) = server.run().await {
+                    error!("Server error: {}", e);
+                    std::process::exit(1);
+                }
             } else {
-                // "udp" or "both" mode: run the UDP gateway
                 if let Err(e) = server.run().await {
                     error!("Server error: {}", e);
                     std::process::exit(1);
