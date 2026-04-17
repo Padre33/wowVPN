@@ -739,29 +739,45 @@ def get_subscription(sub_token: str, db: Session = Depends(get_db)):
     nodes = db.query(NodeDB).filter_by(is_online=True).all()
     servers = []
     
+    def rewrite_key_for_node(shade_key: str, new_ip: str, new_port: int) -> str:
+        """Rewrite server IP:port in a shade:// key for a different node.
+        All nodes share the same crypto keys — only the server address changes."""
+        try:
+            b64 = shade_key.removeprefix("shade://")
+            # Add padding back for standard base64 decode
+            padded = b64 + "=" * (-len(b64) % 4)
+            payload = json.loads(base64.urlsafe_b64decode(padded).decode())
+            payload["s"] = f"{new_ip}:{new_port}"
+            new_b64 = base64.urlsafe_b64encode(
+                json.dumps(payload, separators=(',', ':')).encode()
+            ).rstrip(b'=').decode()
+            return f"shade://{new_b64}"
+        except Exception:
+            return shade_key  # Fallback to original if anything fails
+    
     # Always include the primary server (from the client's existing key)
     if client.psk and client.psk.startswith("shade://"):
         servers.append({
             "id": "primary",
-            "name": "Нидерланды 🇳🇱",
+            "name": "Netherlands 🇳🇱",
             "country": "NL",
             "flag": "🇳🇱",
             "key": client.psk
         })
     
-    # Add any additional nodes from the nodes table
+    # Add any additional nodes from the nodes table — each gets its own IP in the key
     for node in nodes:
-        # Skip if it's the primary server (to avoid duplicates)
         if node.ip_address == "185.204.52.135":
-            continue
+            continue  # Skip primary (already added above)
         flag = get_flag(node.location or node.name)
         country = get_country_code(node.location or node.name)
+        node_key = rewrite_key_for_node(client.psk, node.ip_address, node.port) if client.psk else ""
         servers.append({
             "id": node.id,
             "name": f"{node.name} {flag}",
             "country": country,
             "flag": flag,
-            "key": client.psk  # Use primary key for now; each node will get its own key when deployed
+            "key": node_key
         })
     
     return {
