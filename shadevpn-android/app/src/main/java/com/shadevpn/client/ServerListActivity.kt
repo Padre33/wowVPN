@@ -134,7 +134,18 @@ class ServerListActivity : AppCompatActivity() {
             )
         }
 
-        // 2. Try to extract IP from the key and look up in known servers
+        // 2. Trust the given profile name if it's not a raw IP
+        val ipPattern = Regex("^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}$")
+        if (!ipPattern.matches(profile.name) && profile.name.isNotBlank()) {
+            // Just use the API provided name, fallback flag logic if no regex match
+            return ServerDisplayInfo(
+                displayName = profile.name,
+                flag = flagMatch?.value ?: "🇪🇺",
+                subtitle = profile.name.split(" ").lastOrNull() ?: "Auto"
+            )
+        }
+
+        // 3. Try to extract IP from the key and look up in known servers
         val parsed = parseConnectionKey(profile.key)
         if (parsed != null) {
             val serverIp = parsed[0].substringBefore(":")

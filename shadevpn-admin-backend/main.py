@@ -451,7 +451,7 @@ def create_client(body: ClientCreate, db: Session = Depends(get_db)):
     db.commit()
     
     # 7. Restart Core to hot-reload
-    os.system("systemctl restart shadevpn")
+    os.system('systemctl restart shadevpn && /opt/shadevpn/shadevpn-admin-backend/venv/bin/python3 /opt/shadevpn/shadevpn-admin-backend/push_nodes.py')
     
     return {"status": "created", "shadeLink": sub_shade_link, "directLink": link, "subToken": sub_token}
 
@@ -467,7 +467,7 @@ def delete_client(cid: str, db: Session = Depends(get_db)):
     core = read_clients_db()
     core["clients"] = [x for x in core.get("clients", []) if x.get("id") != cid]
     write_clients_db(core)
-    os.system("systemctl restart shadevpn")
+    os.system('systemctl restart shadevpn && /opt/shadevpn/shadevpn-admin-backend/venv/bin/python3 /opt/shadevpn/shadevpn-admin-backend/push_nodes.py')
     return {"status": "deleted"}
 
 @app.patch("/api/clients/{cid}")
@@ -508,7 +508,7 @@ def update_client(cid: str, body: ClientUpdate, db: Session = Depends(get_db)):
     db.commit()
     
     if needs_core_restart:
-        os.system("systemctl restart shadevpn")
+        os.system('systemctl restart shadevpn && /opt/shadevpn/shadevpn-admin-backend/venv/bin/python3 /opt/shadevpn/shadevpn-admin-backend/push_nodes.py')
         
     return {"status": "updated"}
 
@@ -554,7 +554,7 @@ def toggle_client(cid: str, body: ClientToggle, db: Session = Depends(get_db)):
         if cc.get("id") == cid:
             cc["enabled"] = body.enabled
     write_clients_db(core)
-    os.system("systemctl restart shadevpn")
+    os.system('systemctl restart shadevpn && /opt/shadevpn/shadevpn-admin-backend/venv/bin/python3 /opt/shadevpn/shadevpn-admin-backend/push_nodes.py')
     return {"status": "updated", "enabled": body.enabled}
 
 
