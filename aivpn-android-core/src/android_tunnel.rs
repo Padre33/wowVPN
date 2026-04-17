@@ -32,7 +32,7 @@ use aivpn_common::upload_pipeline::{self, PacketEncryptor, UploadConfig, ZeroMdh
 
 // ──────────── Constants ────────────
 
-const BUF_SIZE: usize = 1500;
+const BUF_SIZE: usize = 65535;
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const HANDSHAKE_RETRY_INTERVAL: Duration = Duration::from_millis(750);
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);  // closer to WireGuard roaming behavior
@@ -44,7 +44,7 @@ const RX_CHECK_INTERVAL: Duration = Duration::from_secs(2);
 const TX_WITHOUT_RX_TIMEOUT: Duration = Duration::from_secs(20);
 const TX_WITHOUT_RX_MIN_BYTES: u64 = 64 * 1024;
 const REKEY_INTERVAL: Duration = Duration::from_secs(1800); // 30 min
-const CHANNEL_SIZE: usize = 8192;
+const CHANNEL_SIZE: usize = 65536;
 
 // ──────────── Session runtime (read by JNI exports in lib.rs) ────────────
 

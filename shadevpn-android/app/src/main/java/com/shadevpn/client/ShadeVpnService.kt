@@ -38,7 +38,7 @@ class ShadeVpnService : VpnService() {
         private const val NOTIFICATION_ID = 1
         // Match the desktop client's WAN-safe TUN MTU so encrypted outer UDP
         // datagrams stay below the path-MTU ceiling on real networks.
-        private const val TUN_MTU         = 1346
+        private const val TUN_MTU         = 1420
         private const val INITIAL_RETRY_DELAY_MS = 500L
         private const val MAX_RETRY_DELAY_MS     = 8_000L
         private const val TAG = "ShadeVpnService"
@@ -227,7 +227,9 @@ class ShadeVpnService : VpnService() {
         val builder = Builder()
             .setSession("ShadeVPN")
             .addAddress(tunAddress4, 24)
-            .addRoute("0.0.0.0", 0)          // IPv4: route all through VPN
+            // Use specific /1 routes to reliably override the system default (0.0.0.0/0)
+            .addRoute("0.0.0.0", 1)
+            .addRoute("128.0.0.0", 1)
         // DNS configuration (NetShield support)
         val isNetShieldEnabled = SecureStorage.loadBoolean(this, "netshield")
         if (isNetShieldEnabled) {
@@ -243,8 +245,9 @@ class ShadeVpnService : VpnService() {
         // Kill Switch: block all non-VPN traffic including IPv6 leaks
         val isKillSwitchEnabled = SecureStorage.loadBoolean(this, "kill_switch")
         if (isKillSwitchEnabled) {
-            // Route IPv6 through VPN too (drops if no IPv6 tunnel — acts as IPv6 leak block)
-            builder.addRoute("::", 0)
+            // Route IPv6 through VPN too using /1 splits to reliably capture it
+            builder.addRoute("::", 1)
+            builder.addRoute("8000::", 1)
             // Strict mode: disallow bypass
             builder.setBlocking(true)
             Log.d(TAG, "Kill Switch enabled: blocking non-VPN traffic + IPv6 leaks")

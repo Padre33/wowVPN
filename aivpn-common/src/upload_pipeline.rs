@@ -28,7 +28,7 @@ pub struct UploadConfig {
 impl Default for UploadConfig {
     fn default() -> Self {
         Self {
-            burst_size: 63,
+            burst_size: 255,
             keepalive_interval: Duration::from_secs(25),
         }
     }
