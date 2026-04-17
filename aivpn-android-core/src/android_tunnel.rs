@@ -184,7 +184,7 @@ pub async fn run_tunnel_android(
     // Convert the raw UDP fd to a tokio UdpSocket (already connected to server).
     let std_udp = unsafe { std::net::UdpSocket::from_raw_fd(raw_udp_fd) };
     std_udp.set_nonblocking(true)?;
-    let udp = Arc::new(UdpSocket::from_std(std_udp)?);
+    let udp = Arc::new(UdpSocket::from_std(std_udp.try_clone().unwrap())?);
 
     // ── 4. Send init handshake (Control/Keepalive + obfuscated eph_pub) ──
     let mut send_counter: u64 = 0;
@@ -937,11 +937,11 @@ async fn run_tls_tunnel(
         let mut reader = tls_reader;
         loop {
             match reader.read(&mut buf).await {
-                Ok(0) => {
+                Ok(None) | Ok(Some(0)) => {
                     let _ = tls_reader_err_tx.send("TLS connection closed".into()).await;
                     break;
                 }
-                Ok(n) => {
+                Ok(Some(n)) => {
                     decoder.push(&buf[..n]);
                     while let Ok(Some(pkt)) = decoder.next_packet() {
                         if srv_tx.send(pkt).await.is_err() { return; }
@@ -1097,8 +1097,12 @@ async fn run_quic_tunnel(
     tls_config.alpn_protocols = vec![b"h3".to_vec()];
 
     let mut client_config = quinn::ClientConfig::new(Arc::new(tls_config.clone().into()));
-    let mut endpoint = quinn::Endpoint::new(quinn::EndpointConfig::default(), None, std_udp)
-        .map_err(|e| Error::Session(format!("QUIC Endpoint error: {}", e)))?;
+    let mut endpoint = quinn::Endpoint::new(
+        quinn::EndpointConfig::default(),
+        None,
+        std_udp,
+        Arc::new(quinn::TokioRuntime)
+    ).map_err(|e| Error::Session(format!("QUIC Endpoint error: {}", e)))?;
 
     let server_name = server_host.clone();
     let addr: SocketAddr = format!("{}:443", server_host)
@@ -1115,17 +1119,13 @@ async fn run_quic_tunnel(
     let (mut quic_send, mut quic_recv) = conn.open_bi().await
         .map_err(|e| Error::Session(format!("QUIC stream error: {}", e)))?;
 
-    
     let quic_send = std::sync::Arc::new(tokio::sync::Mutex::new(quic_send));
-
-let quic_send = Arc::new(tokio::sync::Mutex::new(quic_send));
 
     // ── 2. Send init handshake via QUIC ──
     {
         let framed = aivpn_common::transport::frame_packet(&init_pkt);
         let mut w = quic_send.lock().await;
-        w.write_all(&framed).await.map_err(Error::Io)?;
-        w.flush().await.map_err(Error::Io)?;
+        w.write_all(&framed).await.map_err(|e| Error::Session(e.to_string()))?;
     }
 
     // ── 3. Wait for ServerHello via QUIC ──
@@ -1145,7 +1145,8 @@ let quic_send = Arc::new(tokio::sync::Mutex::new(quic_send));
 
             tokio::select! {
                 res = quic_recv.read(&mut temp_buf) => {
-                    let n = res.map_err(Error::Io)?;
+                    let maybe_n = res.map_err(|e| Error::Session(e.to_string()))?;
+                    let n = match maybe_n { Some(v) => v, None => 0 };
                     if n == 0 {
                         return Err(Error::Session("QUIC connection closed during handshake".into()));
                     }
@@ -1161,8 +1162,7 @@ let quic_send = Arc::new(tokio::sync::Mutex::new(quic_send));
                     let retry_pkt = build_zero_mdh_packet(&keys, &mut send_counter, &keepalive_inner, Some(&obf_arr))?;
                     let framed = aivpn_common::transport::frame_packet(&retry_pkt);
                     let mut w = quic_send.lock().await;
-                    w.write_all(&framed).await.map_err(Error::Io)?;
-                    w.flush().await.map_err(Error::Io)?;
+                    w.write_all(&framed).await.map_err(|e| Error::Session(e.to_string()))?;
                 }
             }
         }
@@ -1262,11 +1262,11 @@ let quic_send = Arc::new(tokio::sync::Mutex::new(quic_send));
         let mut reader = quic_recv;
         loop {
             match reader.read(&mut buf).await {
-                Ok(0) => {
+                Ok(None) | Ok(Some(0)) => {
                     let _ = quic_recv_err_tx.send("QUIC connection closed".into()).await;
                     break;
                 }
-                Ok(n) => {
+                Ok(Some(n)) => {
                     decoder.push(&buf[..n]);
                     while let Ok(Some(pkt)) = decoder.next_packet() {
                         if srv_tx.send(pkt).await.is_err() { return; }
