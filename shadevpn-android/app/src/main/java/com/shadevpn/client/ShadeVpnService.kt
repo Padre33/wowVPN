@@ -12,6 +12,7 @@ import android.net.NetworkRequest
 import android.net.NetworkCapabilities
 import android.net.VpnService
 import android.os.ParcelFileDescriptor
+import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
 import kotlinx.coroutines.*
@@ -48,6 +49,9 @@ class ShadeVpnService : VpnService() {
         @Volatile var isRunning     = false
         @Volatile var lastStatusText = ""
     }
+
+    // Wake lock — keeps CPU running when screen is off (same as WireGuard/OpenVPN)
+    private var wakeLock: PowerManager.WakeLock? = null
 
     // TUN interface wrapper (Kotlin holds PFD for lifecycle; Rust holds raw fd after detach)
     private var vpnInterface: ParcelFileDescriptor? = null
@@ -168,6 +172,9 @@ class ShadeVpnService : VpnService() {
 
                 serviceJob = serviceScope.launch {
             var retryDelayMs = INITIAL_RETRY_DELAY_MS
+            // Acquire wake lock — keeps CPU awake when screen is locked
+            // Without this, Android suspends the process and VPN dies silently
+            acquireWakeLock()
             try {
                 while (isActive && !manualDisconnect) {
                     try {
@@ -214,6 +221,7 @@ class ShadeVpnService : VpnService() {
             } catch (e: CancellationException) {
                 Log.d(TAG, "Service job cancelled")
             } finally {
+                releaseWakeLock()
                 isRunning = false
                 closeTunnel()
                 serviceJob = null
@@ -579,6 +587,23 @@ class ShadeVpnService : VpnService() {
         isRunning = false
         serviceScope.cancel()
         super.onDestroy()
+    }
+    private fun acquireWakeLock() {
+        if (wakeLock?.isHeld == true) return
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = pm.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK,
+            "ShadeVPN::TunnelWakeLock"
+        ).also {
+            it.setReferenceCounted(false)
+            it.acquire()
+            Log.d(TAG, "Wake lock acquired")
+        }
+    }
+
+    private fun releaseWakeLock() {
+        wakeLock?.let { if (it.isHeld) it.release() }
+        wakeLock = null
     }
 
     // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Network waiting â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

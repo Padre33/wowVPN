@@ -9,6 +9,10 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Wake lock: keep CPU active when screen is off so VPN tunnel stays alive -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Request to disable battery optimization for this app -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
         android:name=".ShadeVpnApp"
